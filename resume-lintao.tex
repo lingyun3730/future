@@ -1,7 +1,6 @@
 % !TEX TS-program = xelatex
 % !TEX encoding = UTF-8 Unicode
 % !Mode:: "TeX:UTF-8"
-
 \documentclass{resume}
 \usepackage{zh_CN-Adobefonts_external} % Simplified Chinese Support using external fonts (./fonts/zh_CN-Adobe/)
 \usepackage{linespacing_fix} % disable extra space before next section
@@ -71,10 +70,10 @@ Software Engineer - Summer Intern
 \section{\faGraduationCap\ Education}
 \datedsubsection{\textbf{Shanghai Jiaotong University}}{Sep. 2016 -- Mar. 2019}
 \textit{Electronic and Communication Engineering}, Master Degree
-\\ \textbf{GPA 3.68/4.0}, won the 2018 National Postgraduate Scholarship, Won the second prize of the 2016 National Postgraduate Mathematical Contest in Modeling
+\\ \textbf{GPA 3.68/4.0}, awarded the National Postgraduate Scholarship in 2018, secured the second prize in the 2016 National Postgraduate Mathematical Contest in Modeling.
 \datedsubsection{\textbf{Tongji University}}{Sep. 2012 -- Jul. 2016}
 \textit{Electronic and Communication Engineering}, Bachelor Degree
-\\ \textbf{GPA 4.8/5.0}, 2016 Shanghai Outstanding Graduate
+\\ \textbf{GPA 4.8/5.0}, Received the title of Outstanding Graduate of Shanghai in 2016
 
 \name{党林涛}
 
@@ -89,13 +88,13 @@ Software Engineer - Summer Intern
 \section{专业技能}
 % increase linespacing [parsep=0.5ex]
 \begin{itemize}[parsep=0.2ex]
-\item \textbf{支付}: 熟悉支付记账系统架构，以及相关业务包括支付记账，对账，报表生成，以及换汇FX等。
-\item \textbf{数据结构与算法}: 熟练掌握基础数据结构与算法。
-\item \textbf{编程语言}: 掌握Java基础, 微服务框架 Springboot, Java多线程技术等。
-\item \textbf{分布式技术}: 熟悉Raft分布式系统共识协议，日常使用etcd作为分布式系统强一致Key-Value服务注册工具。
-\item \textbf{大数据}: 熟悉Spark编程模型，善于Spark Job性能调优。
-\item \textbf{消息中间件}: 熟悉消息中间件Kafka基本架构和使用。
-\item \textbf{数据库}: 掌握Oracle数据库查询优化，并使用缓存数据库Redis。
+  \item \textbf{支付}: 熟悉支付记账系统架构，以及相关业务包括支付记账，对账，报表生成，以及换汇FX等。
+  \item \textbf{数据结构与算法}: 熟练掌握基础数据结构与算法。
+  \item \textbf{编程语言}: 掌握Java基础, 微服务框架 Springboot, Java多线程技术等。
+  \item \textbf{分布式技术}: 熟悉Raft分布式系统共识协议，日常使用etcd作为分布式系统强一致Key-Value服务注册工具。
+  \item \textbf{大数据}: 熟悉Spark编程模型，善于Spark Job性能调优。
+  \item \textbf{消息中间件}: 熟悉消息中间件Kafka基本架构和使用。
+  \item \textbf{数据库}: 掌握Oracle数据库查询优化，并使用缓存数据库Redis。
 %\item \textbf{其他}: 熟悉Kubenetes 基本原理，搭建与使用。
 \end{itemize}
 % \end{itemize}
@@ -103,37 +102,36 @@ Software Engineer - Summer Intern
 \section{工作经历}
 \datedsubsection{\textbf{亿贝软件工程(上海)有限公司 | eBay}, Software Engineer - Payments}{2019.04 - 至今}
 \begin{itemize}
-%   \item 飞猪北京前端团队全面负责各交通线的票务(机票/火车票/汽车票) web 应用与事业群基础架构研发
-\item \textbf{FAS支付记账系统财务报表子系统设计与实现}
-\begin{itemize}
-\item[。] 财务报表子系统是从FAS支付记账系统中查询，分析，聚合，处理用户交易记录信息，并从不同维度实时或者批量生成财务团队需要的报表的平台系统。
-\item[。] 根据财务团队的业务需求，在学习并理解支付记账系统复杂业务逻辑的基础上进行后台开发，后台部分采用支持Fail-Over的Java多线程框架，搭建etcd作为服务注册工具，充分利用集群资源，保证报表生成的效率和准确度。
-\item[。] 负责后台数据与前端对接的Web Service开发，采用基于OIDC的Sail Point身份管理使系统支持基于权限控制的单点登录SSO。
-\end{itemize}
-\item \textbf{支付记账数据 ETL 持久化到Hadoop}
-\begin{itemize}
-\item[。] 对线上数据做抽取，转化和加载，通过Kafka消息中间件，最后将数据以parquet格式持久化到Hadoop HDFS，创建HIVE table schema并做Partition，支持HIVE SQL数据查询。
-\item[。] 创建 batch job 定期对Parquet数据文件合并，并做数据recon。
-\end{itemize}
-\item \textbf{财务报表生成的大数据解决方案}
-\begin{itemize}
-\item[。] 基于HIVE table的数据源，采用基于Scala的Spark 编程来生成支付账户的账龄报告，性能调优显著提升了报告的生成时效。
-\end{itemize}
-\item \textbf{支付系统资金管理平台}
-\begin{itemize}
-\item[。] 根据不同业务需求，支持rule based资金调拨，保证资金调拨的原子性，实时性和幂等性。
-\end{itemize}
-\item \textbf{支付换汇平台搭建}
-\begin{itemize}
-\item[。] 参与搭建FX Center，集成不同Vendor提供的汇率，为公司所有FX换汇业务提供相应的汇率。
-\item[。] 负责FX Core换汇平台搭建，集成公司所有换汇业务的财务相关FX 计算。
-\end{itemize}
-\item \textbf{其他}
-\begin{itemize}
-\item[。] 领导多个内部项目的开发，包括需求讨论，架构设计，开发，自测，Code Review，E2E，并且快速响应功能上线后出现的故障并及时修复,撰写或完善开发文档等。
-\item[。] 与Finance/Accounting同事沟通日常需求，了解他们的痛点后开发了Easy Finance Tool帮助他们更方便准确地在平台上Propose记账需求，支持Approval功能并满足财务Compliance要求。
-\item[。] 2019年8月-2020年3月参与eBay FAS 支付记账系统迁移工作，开发程序对部分账户的余额从老系统到新系统迁移时的对账。
-\end{itemize}
+  \item \textbf{FAS支付记账系统财务报表子系统设计与实现}
+    \begin{itemize}
+      \item[。] 财务报表子系统是从FAS支付记账系统中查询，分析，聚合，处理用户交易记录信息，并从不同维度实时或者批量生成财务团队需要的报表的平台系统。
+      \item[。] 根据财务团队的业务需求，在学习并理解支付记账系统复杂业务逻辑的基础上进行后台开发，后台部分采用支持Fail-Over的Java多线程框架，搭建etcd作为服务注册工具，充分利用集群资源，保证报表生成的效率和准确度。
+      \item[。] 负责后台数据与前端对接的Web Service开发，采用基于OIDC的Sail Point身份管理使系统支持基于权限控制的单点登录SSO。
+    \end{itemize}
+  \item \textbf{支付记账数据 ETL 持久化到Hadoop}
+    \begin{itemize}
+      \item[。] 对线上数据做抽取，转化和加载，通过Kafka消息中间件，最后将数据以parquet格式持久化到Hadoop HDFS，创建HIVE table schema并做Partition，支持HIVE SQL数据查询。
+      \item[。] 创建 batch job 定期对Parquet数据文件合并，并做数据recon。
+    \end{itemize}
+  \item \textbf{财务报表生成的大数据解决方案}
+    \begin{itemize}
+      \item[。] 基于HIVE table的数据源，采用基于Scala的Spark 编程来生成支付账户的账龄报告，性能调优显著提升了报告的生成时效。
+    \end{itemize}
+  \item \textbf{支付系统资金管理平台}
+    \begin{itemize}
+      \item[。] 根据不同业务需求，支持rule based资金调拨，保证资金调拨的原子性，实时性和幂等性。
+    \end{itemize}
+  \item \textbf{支付换汇平台搭建}
+    \begin{itemize}
+      \item[。] 参与搭建FX Center，集成不同Vendor提供的汇率，为公司所有FX换汇业务提供相应的汇率。
+      \item[。] 负责FX Core换汇平台搭建，集成公司所有换汇业务的财务相关FX 计算。
+    \end{itemize}
+  \item \textbf{其他}
+    \begin{itemize}
+      \item[。] 领导多个内部项目的开发，包括需求讨论，架构设计，开发，自测，Code Review，E2E，并且快速响应功能上线后出现的故障并及时修复,撰写或完善开发文档等。
+      \item[。] 与Finance/Accounting同事沟通日常需求，了解他们的痛点后开发了Easy Finance Tool帮助他们更方便准确地在平台上Propose记账需求，支持Approval功能并满足财务Compliance要求。
+      \item[。] 2019年8月-2020年3月参与eBay FAS 支付记账系统迁移工作，开发程序对部分账户的余额从老系统到新系统迁移时的对账。
+    \end{itemize}
 \end{itemize}
 
 \datedsubsection{\textbf{摩根士丹利管理服务(上海)有限公司}, Software Engineer - Summer Intern}{2018.07 - 2018-09}
