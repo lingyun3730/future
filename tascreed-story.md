@@ -9,7 +9,9 @@
 - 我们怎么用：定义 Job（Step DAG），Step 可分片并行；写 TaskExecutor；按 `jobName + trigger` 触发。
 - 可靠性：无 leader，Worker 自己抢 Task，etcd lease + 心跳，节点挂了占用自动过期，别的节点重跑。
 - 代价：至少一次执行，任务必须幂等。
-- 我的贡献：待补（不要说成设计了框架，开源仓库唯一作者是 Lionel Liu）。
+- 我的角色：财务报表场景的重度使用者；调试时发现框架问题就主动修复（不要说成设计了框架，开源仓库唯一作者是 Lionel Liu）。
+- 我的改进 1：调试时发现有线程无限 retry 又停不下来 → 在基础框架加 retry 策略（exponential backoff），并开放 API 可以 kill 掉一直 retry 的线程。
+- 我的改进 2：用的人变多后，团队做了 UI portal，集中监控和管理正在运行的线程，发现无效 retry 的线程就在 portal 上 kill；UI 有权限控制。（我在 UI 里的具体角色：待补）
 
 ## 口述提示卡
 
@@ -19,7 +21,7 @@
 4. etcd lease + 心跳 = 故障恢复
 5. 至少一次 → 幂等
 6. FAILED vs ERROR，CAN_FAIL
-7. 我做了什么（待补）
+7. 我做了什么：发现无限 retry → 加 exponential backoff + kill API → 后来团队做 portal 集中监控和 kill（带权限）
 
 ## 30-second Overview
 
@@ -37,7 +39,18 @@ At eBay, my team used an internal distributed task framework called TasCreed to 
 
 **Failure handling.** A task result is either FAILED, an expected failure that can be retried, or ERROR, an unexpected exception. A step can be marked as allowed to fail, so it does not block later steps. Only successful jobs are archived. Failed ones stay visible, so we can retry them.
 
-**My part.** [待补: your real contribution, e.g. defining report jobs and steps, writing task executors, fixing issues, operating it in production.]
+**My part.** I was a heavy user of the framework, mainly for generating our financial reports. When I found something to improve while debugging, I fixed it in the framework myself. For example, I noticed some threads were retrying endlessly and I had no way to stop them in time. So I added retry strategies to the base framework, such as exponential backoff, and I exposed an API to kill threads that keep retrying. Later, more teams started using the framework, so we built a UI portal to monitor and manage the running threads in one place. If a thread is retrying with no hope of success, we can kill it from the portal. The portal has permission control, so only authorized people can do that. [待补: your exact role in the portal.]
+
+### My improvement story (STAR)
+
+- **Situation:** While debugging report jobs, I saw threads retrying endlessly, for example when a dependency was down or a task could never succeed. They kept using resources and I couldn't stop them in time.
+- **Task:** Make retries smarter and give operators a way to stop a bad retry loop without redeploying.
+- **Action:** I added more retry strategies to the base framework, including exponential backoff, so retries slow down instead of hammering the dependency. I also exposed an API to kill a thread that keeps retrying. It deletes the task's adoption in etcd, so on the next heartbeat the worker can't find it and the task is released.
+- **Result:** We could stop runaway retries quickly. As adoption grew, the team built a portal with permission control to monitor and kill threads centrally. [待补: numbers, e.g. incidents avoided, number of teams.]
+
+### Why this matters (tie it to the architecture)
+
+"Because the framework is at-least-once and retry-based, a task that can never succeed can loop forever. Backoff limits the damage, and the kill switch gives humans the last word."
 
 ## Technical Deep Dive
 
@@ -141,8 +154,36 @@ Check the job and step states, find the failing task, look at its logs and adopt
 
 ### Behavioral
 
-**Q: What was your contribution?** [待补]
-Be specific: what you built, what you fixed, what you owned. Use "I" for your own work and "we" for the team.
+**Q: What was your contribution?**
+"I was a heavy user, mainly for financial reports. When I found a problem, I fixed it in the framework. The main one was endless retries: I added retry strategies like exponential backoff and an API to kill a retrying thread. Later we built a portal, with permission control, to monitor and kill threads centrally."
+
+**Q: Why add exponential backoff?**
+With a fixed retry interval, a failing dependency gets hit again and again at the same rate. With exponential backoff, the wait grows after each failure, so it reduces load and gives the dependency time to recover. [待补: the max delay and max retry count you chose, and whether you added jitter.]
+
+**Q: Why not just limit the retry count?**
+A count limit helps, but some failures are temporary and long, like an etcd or downstream outage, so we still want to retry for a while. Backoff handles that. The kill API covers cases we didn't predict. [Check this matches what you did.]
+
+**Q: How does the kill API work?**
+"It deletes the task's adoption key in etcd. On its next heartbeat, the worker reads the adoption key, finds it missing or different, and the heartbeat fails with a non-retryable error. The occupation is marked as no longer alive, so the task is released. This reuses the same lease-and-heartbeat mechanism that handles node crashes, so we didn't need a new kill channel." [待补: how the worker thread itself stops after losing the occupation, and how long it takes, up to one heartbeat period, which is about TTL/3.]
+Be ready for: killing is not cancelling the job. The task is still todo, so another node may pick it up again. To really stop it, ban or delete the job. Also, the kill takes effect at the next heartbeat, not instantly.
+
+**Q: What happens to the task after a kill?**
+"The adoption is gone, so the task is released and is still todo. Another worker can pick it up and run it again, which is safe because tasks are idempotent. If we want it to stop for good, we ban the job." [待补: what you actually did in practice.]
+
+**Q: How did you decide which threads to kill?**
+We watched the portal for threads stuck in repeated retries with the same error and no progress. [待补: what signals you used, such as retry count, running time, or error message.]
+
+**Q: Why build a portal?**
+As more people used the framework, calling APIs by hand did not scale. A central UI shows all running threads, and operators can act quickly.
+
+**Q: How is the portal secured?**
+It has permission control, so only authorized users can view or kill threads. Killing is a risky operation. [待补: the model, e.g. roles, per-team access, audit log.]
+
+**Q: Did you contribute your changes back to the open-source version?**
+[待补.] The open-source repo has retry strategies (equal, linear backoff, backoff) and API to delete a task adoption. Check with your own history whether these are yours before claiming them.
+
+**Q: Tell me about a time you improved a tool you were using.**
+Use the retry story above. Lead with the pain (endless retries), then what you built, then how it grew into a team portal.
 
 **Q: What was the hardest problem?** [待补]
 Possible angles: duplicate execution after failover, idempotency of report output, stuck jobs, upgrade compatibility.
@@ -167,7 +208,12 @@ Possible answers (these are design observations, not facts about our system): re
 
 ## 下一轮需要补齐的事实
 
-1. 我的具体贡献（哪些模块或功能，开发、使用，还是运维）。
+1. 我的贡献细节（已知：加了 exponential backoff 等 retry 策略和 kill API；团队做了带权限的 portal）。还缺：
+   - kill 之后 Worker 线程本身怎么停下来、多久生效（已知：删 etcd 上的 adoption，心跳找不到后释放 Task）
+   - backoff 的参数（初始间隔、上限、最大次数、是否有 jitter）
+   - portal 里我具体做了什么（前端、后端、需求、权限设计？）
+   - 哪些改动合进了开源版本（`ACKNOWLEDGEMENTS.md` 里有 Lintao Dang，但 Contributors 里没有）
+   - 当时触发这件事的具体事件，以及改进后的效果和使用人数
 2. 财务报表 Job 的 Step 划分、分片数、触发方式、运行时长。
 3. 幂等的具体做法。
 4. 是否用了 CAN_FAIL、Routine、Node Duty、Ban、Schedule。
