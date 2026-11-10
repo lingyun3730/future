@@ -56,8 +56,6 @@
 >
 > Second, we needed to check that each currency pair settled as expected in production. We couldn't create test orders for every pair, and we didn't have the budget to pay a third party to do it.
 >
-> （待补：截图缺失的过渡句，原稿此处引出 traffic controller。）
->
 > So we used a traffic controller to send a small amount of live traffic through the new setup. It used tokens to control which transactions could enter the test path.
 >
 > Some pairs had lots of traffic. Others might have no transactions for days. For busy pairs, a worker took and deducted the token before using the new path. For rare pairs, several workers could look for a matching transaction and deduct the token after processing it. This gave us a better chance of finding rare transactions, but it could let more than one through.
