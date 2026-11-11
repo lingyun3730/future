@@ -69,7 +69,7 @@
 
 ### 功能需求（白板上这样写）
 
-1. 商户 API：发起 charge（authorize、capture）和 refund。
+1. 商户 API：三个操作，**authorization**（验卡并预留额度）、**capture**（真正扣款）、**refund**（退款）。capture 和 refund 都引用 authorization 时生成的 `processorTransactionId`。
 2. 跟踪每笔支付和每个操作的状态。
 3. 与银行交互，处理失败和超时。
 4. 状态变化时通知商户（webhook），也支持查询。
@@ -103,32 +103,272 @@
 
 ## 4. API 与数据模型
 
-### API
+### 4.1 生命周期与 ID
 
-```http
-POST /v1/payments
-Idempotency-Key: <merchant generated>
+一笔付款分三个操作，**用同一个 `processorTransactionId` 串起来**：
 
-{ "amount": 1000, "currency": "GBP", "cardToken": "tok_...", "reference": "order_100" }
-
-POST /v1/payments/{paymentId}/captures    { "amount": 1000 }
-POST /v1/payments/{paymentId}/refunds     { "amount": 700 }
-GET  /v1/payments/{paymentId}
+```text
+Authorization ──▶ Capture ──▶ Refund
+创建这个 ID        引用它       引用它
 ```
 
-响应（不要只返回 success/failed）：
+| | Authorization | Capture | Refund |
+| --- | --- | --- | --- |
+| 作用 | 验卡，向发卡行预留额度，**不扣款** | 真正扣款 | 退款 |
+| 和 ID 的关系 | **创建** `processorTransactionId` | 引用它 | 引用它 |
+| 参数 | 卡信息、金额、币种（最多，因为要让发卡行判断） | 金额、币种（必须等于授权额），其余都在 auth 里 | 金额、币种，可部分、可多次 |
+
+| ID | 谁生成 | 用途 |
+| --- | --- | --- |
+| `processorTransactionId` | 我们，在 auth 时生成，只出现在响应里 | 商户用它引用这笔交易（capture、refund、查询） |
+| `operationId` | 我们，每次 API 调用生成 | 标识一次操作；同时作为银行幂等键 |
+| `merchantReference` | 商户（可选） | 商户自己的订单号，方便对账，不能代替 ID |
+| `Idempotency-Key`（请求头） | 商户 | 防重复提交，每个请求一个 |
+| 银行引用 | 银行 | 只保存在内部，auth 的引用供 capture 使用 |
+
+**范围：** auth → capture → refund，不含 void，不含“auth + capture 一步完成”。
+
+### 4.2 Authorization
+
+验卡并预留额度，不扣款。
+
+**Request**
+
+```http
+POST /v1/payments/authorizations
+Idempotency-Key: auth-order-100-1
+```
 
 ```json
 {
-  "paymentId": "pay_123",
-  "operationId": "op_456",
-  "status": "PENDING",
+  "card": { "token": "tok_abc123" },
   "amount": 1000,
   "currency": "GBP",
-  "createdAt": "2026-11-11T08:00:00Z",
-  "errorCode": null
+  "merchantReference": "order_100"
 }
 ```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `Idempotency-Key`（请求头） | 是 | 防重复提交 |
+| `card.token` | 是 | 卡信息。vault 服务生成 token，不传完整卡号（PCI 不在范围内） |
+| `amount` | 是 | 最小货币单位（pence），避免浮点 |
+| `currency` | 是 | 币种 |
+| `merchantReference` | 否 | 商户订单号，方便对账 |
+
+最小版本，生产环境还会有 customer、billingAddress、3DS、descriptor、metadata 等，这里为聚焦核心流程省略。`processorTransactionId` 不在请求里，由我们生成。
+
+**Response**
+
+```json
+{
+  "processorTransactionId": "ptx_789",
+  "operationId": "op_001",
+  "status": "AUTHORIZED",
+  "amount": 1000,
+  "currency": "GBP"
+}
+```
+
+| status | HTTP | 说明 |
+| --- | --- | --- |
+| `AUTHORIZED` | 200 | 批准，可以 capture |
+| `DECLINED` | 402 | 发卡行拒绝；响应体仍有 `processorTransactionId`、`errorCode`、`retryable` |
+| `PENDING` | 202 | 超时或未知；**仍然返回 `processorTransactionId`**，商户用 GET 查询并等 webhook |
+| 请求不合法 | 400 / 422 | 缺字段、金额非法、同一个 key 带了不同内容 |
+
+DECLINED 示例：
+
+```json
+{
+  "processorTransactionId": "ptx_790",
+  "operationId": "op_010",
+  "status": "DECLINED",
+  "errorCode": "INSUFFICIENT_FUNDS",
+  "retryable": false
+}
+```
+
+**设计说明：**
+
+- 被拒的 auth 也生成 `processorTransactionId`，因为它是要审计和对账的记录，但不能被 capture。
+- 402 和 400/422 要区分：402 是“请求合法，但发卡行不同意”；400/422 是请求本身有问题。
+- 商户不能对 402 自动重试。`retryable` 区分软拒绝（可换卡再试）和硬拒绝（如被盗卡，不应再试）。
+- 同一个幂等键重放，返回同一个 402 结果，不会再次调用银行。
+- 状态码可能被客户端或代理区别对待，所以靠 `errorCode` 和 `retryable` 说明，不要只看状态码。
+
+> "I return 402 when the issuer declines, with the transaction ID and a clear error code, so the merchant can tell a declined card from an invalid request. A declined authorization still gets an ID, because we keep it for audit and reconciliation."
+
+若面试官问“为什么不用 200”：
+
+> "Both work. Some payment APIs return 200 with a declined status, because a decline is a normal business outcome. I chose 4xx so that clients can't treat a decline as a success by mistake. Either way, the response body has the same details."
+
+**内部流程：** 走核心流程 6 步：生成 `processorTransactionId` 和 `operationId` → 写 operation 记录 → 用 `operationId` 作为银行幂等键调用银行授权 → 保存银行返回的授权引用（供 capture 使用）。
+
+### 4.3 Capture
+
+从已预留的额度里真正扣款。**只支持对一个 auth 做一次全额 capture。**
+
+卡和金额币种已在 auth 里，capture 只需要说“扣多少”，并用 `processorTransactionId` 找到对应的 auth。
+
+**Request**
+
+```http
+POST /v1/payments/ptx_789/captures
+Idempotency-Key: capture-order-100-1
+```
+
+```json
+{
+  "amount": 1000,
+  "currency": "GBP",
+  "merchantReference": "order_100"
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `processorTransactionId`（路径） | 是 | auth 响应里拿到的 ID |
+| `Idempotency-Key`（请求头） | 是 | 防重复 capture |
+| `amount` | 是 | **必须等于授权额**；必填是为了让商户明确确认金额，防止传错 |
+| `currency` | 是 | 必须和 auth 一致 |
+| `merchantReference` | 否 | 商户订单号，方便对账 |
+
+**Response**
+
+```json
+{
+  "processorTransactionId": "ptx_789",
+  "operationId": "op_002",
+  "status": "CAPTURED",
+  "amount": 1000,
+  "currency": "GBP"
+}
+```
+
+| status | HTTP | 说明 |
+| --- | --- | --- |
+| `CAPTURED` | 200 | 已确认扣款 |
+| `PENDING` | 202 | 未知，等恢复或 webhook；保持 CAPTURING，不能被再次 capture |
+| `FAILED` | 402 | 银行明确拒绝（沿用 auth 的做法） |
+
+**本地校验（先于银行调用）：**
+
+| 情况 | HTTP | errorCode |
+| --- | --- | --- |
+| `processorTransactionId` 不存在或不属于该商户 | 404 | `TRANSACTION_NOT_FOUND` |
+| auth 不是 AUTHORIZED（被拒、已过期） | 409 | `AUTHORIZATION_NOT_CAPTURABLE` |
+| 已经 capture 过（用了不同的 key） | 409 | `ALREADY_CAPTURED` |
+| 金额不等于授权额，或币种不一致 | 422 | `AMOUNT_MISMATCH` / `CURRENCY_MISMATCH` |
+| 同一个 key 带了不同内容 | 422 | `IDEMPOTENCY_KEY_REUSED` |
+
+**并发控制：** 条件更新 `UPDATE ... SET status='CAPTURING' WHERE status='AUTHORIZED'`。两个并发的 capture（不同 key）只有一个能更新成功，所以不需要金额预留表；另一个得到 409。同一个 key 的重复请求由幂等记录处理，返回已有结果。
+
+**内部流程：** 走核心流程 6 步。调用银行时带上 auth 时保存的**银行授权引用**，用 capture 自己的 `operationId` 作为银行幂等键，保存银行返回的 capture 引用（供 refund 使用）。
+
+> "Capture only needs the transaction ID, the amount, and the currency, because the card and customer data are already on the authorization. We allow one full capture per authorization, so the amount must match. Two concurrent captures can't both succeed: we move the authorization from AUTHORIZED to CAPTURING with a conditional update, and only one wins."
+
+### 4.4 Refund
+
+把已扣的钱退回给持卡人。引用 `processorTransactionId`。因为 capture 只能一次全额，所以**可退总额 = 授权额（已 capture 金额）**。支持**部分退款，可多次**，累计不超过已 capture 金额。
+
+**Request**
+
+```http
+POST /v1/payments/ptx_789/refunds
+Idempotency-Key: refund-order-100-1
+```
+
+```json
+{
+  "amount": 700,
+  "currency": "GBP",
+  "merchantReference": "order_100"
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `processorTransactionId`（路径） | 是 | auth 响应里的 ID |
+| `Idempotency-Key`（请求头） | 是 | 防重复退款 |
+| `amount` | 是 | 要退多少；不能超过剩余可退金额 |
+| `currency` | 是 | 必须和原交易一致 |
+| `merchantReference` | 否 | 商户订单号，方便对账 |
+
+**Response**
+
+```json
+{
+  "processorTransactionId": "ptx_789",
+  "operationId": "op_003",
+  "status": "REFUNDED",
+  "amount": 700,
+  "currency": "GBP",
+  "refundableAmount": 300
+}
+```
+
+`refundableAmount` 是这次退款之后还剩多少可退。
+
+| status | HTTP | 说明 |
+| --- | --- | --- |
+| `REFUNDED` | 200 | 银行确认退款 |
+| `PENDING` | 202 | 未知，保持预留，等恢复或 webhook |
+| `FAILED` | 402 | 银行明确拒绝，预留释放 |
+
+**本地校验：**
+
+| 情况 | HTTP | errorCode |
+| --- | --- | --- |
+| 交易不存在 | 404 | `TRANSACTION_NOT_FOUND` |
+| 还没有成功的 capture | 409 | `NOTHING_TO_REFUND` |
+| 超过剩余可退金额 | 422 | `AMOUNT_EXCEEDS_REFUNDABLE` |
+| 币种不一致 | 422 | `CURRENCY_MISMATCH` |
+| 同一个 key 带了不同内容 | 422 | `IDEMPOTENCY_KEY_REUSED` |
+
+**并发控制（和 capture 不同）：** 退款可以多次、部分，所以不能只靠状态条件更新，要用**金额预留**：在短事务里锁住该交易的余额行，检查 `captured − 已退款 − 已预留`，预留金额，写入 operation 和 outbox，提交后再调银行。银行结果未知时不能释放预留。详见第 5 节“退款：并发时防止多退”。
+
+**内部流程：** 走核心流程 6 步。调用银行时带上 capture 保存的**银行 capture 引用**，用 refund 自己的 `operationId` 作为银行幂等键。
+
+> "Refund needs the transaction ID, an amount, and a currency. Partial refunds are allowed, many times, up to the captured amount. Since two refunds can arrive at the same time, we reserve the amount in a short database transaction before calling the bank."
+
+### 4.5 查询与通用
+
+```http
+GET /v1/payments/{processorTransactionId}
+```
+
+返回交易当前状态和它所有的操作（auth、capture、refund 及各自的状态和金额）。商户收到 202 PENDING，或 webhook 丢了，靠它拿最新状态。
+
+商户身份来自 API key 或 OAuth token，在 API gateway 认证，不从请求体里取。
+
+### 4.6 完整例子：£10.00 的订单
+
+```text
+1. POST /v1/payments/authorizations   amount=1000
+   → 200 AUTHORIZED, processorTransactionId = ptx_789
+
+2. POST /v1/payments/ptx_789/captures amount=1000
+   → 200 CAPTURED
+
+3. POST /v1/payments/ptx_789/refunds  amount=700
+   → 200 REFUNDED, refundableAmount = 300
+
+4. POST /v1/payments/ptx_789/refunds  amount=700 （新 key）
+   → 422 AMOUNT_EXCEEDS_REFUNDABLE（只剩 300）
+```
+
+每一步在我们内部：写一条 operation 记录 → 用 `operationId` 作为银行幂等键调用银行 → 保存银行引用。**capture 用 auth 的银行授权引用，refund 用 capture 的银行引用。**
+
+### 4.7 面试时怎么讲 API
+
+> "There are three operations. Authorization checks the card and reserves funds, but doesn't take money. It creates a processor transaction ID and returns it. Capture and refund reference that ID in the path, because the card data is already on the authorization.
+>
+> Capture is one full capture per authorization, so the amount must match. Refund can be partial and repeated, up to the captured amount, so we reserve the amount before calling the bank.
+>
+> Each call is its own operation with its own idempotency key, and an operation ID that we use as the bank's idempotency key. For capture and refund, we send the bank the reference it gave us earlier."
+
+**通用 HTTP 状态：**
 
 | HTTP 状态 | 含义 |
 | --- | --- |
@@ -136,21 +376,19 @@ GET  /v1/payments/{paymentId}
 | 202 | 已接受，处理中（PENDING） |
 | 400 / 422 | 请求内容错误；同一个 key 带了不同内容 |
 | 401 / 403 | 认证或权限 |
+| 402 | 发卡行或银行拒绝 |
 | 429 | 超过限流，带 Retry-After |
-
-**商户身份：** 来自 API key 或 OAuth token，在 API gateway 认证，不从请求体里取。
-
-**流程说明：** 付款分两阶段：authorization 预留额度，capture 真正扣款。capture 必须以成功的 authorization 为前提。
 
 ### 数据模型
 
 ```text
-payment
-  payment_id, merchant_id, currency, authorized_amount,
-  captured_amount, refunded_amount, status, created_at
+transaction                     （一个 processorTransactionId 一条，从 auth 开始）
+  processor_transaction_id, merchant_id, currency, authorized_amount,
+  captured_amount, refunded_amount, status, auth_expires_at,
+  bank_auth_reference, bank_capture_reference, created_at
 
 operation                       （每次 authorize / capture / refund 一条）
-  operation_id, payment_id, type, amount, currency,
+  operation_id, processor_transaction_id, type, amount, currency,
   status, bank_id, bank_reference, bank_idempotency_key,
   created_at, updated_at
 
@@ -158,8 +396,8 @@ idempotency_key
   merchant_id, operation_type, idempotency_key   （联合唯一）
   request_hash, operation_id, response
 
-balance_reservation             （退款或 capture 预留金额）
-  reservation_id, payment_id, operation_id, amount, status
+balance_reservation             （仅退款预留金额；capture 用条件更新）
+  reservation_id, processor_transaction_id, operation_id, amount, status
 
 outbox_event
   event_id, type, payload, status, created_at, sent_at
@@ -170,9 +408,9 @@ state_transition_history        （审计：每次状态变化只追加）
 
 要点：
 
-- **payment 和 operation 分开**：支持部分 capture 和部分退款，不覆盖历史。
+- **transaction 和 operation 分开**：支持多次部分退款，不覆盖历史。
 - **追加式历史**：状态变化只追加，不修改旧记录。
-- **同一支付的数据在同一个分片**：余额检查在一个本地事务里完成。
+- **同一 processorTransactionId 的数据在同一个分片**：余额检查在一个本地事务里完成。
 
 ### 状态机
 
@@ -251,7 +489,7 @@ stateDiagram-v2
 
 > "For idempotency, each request carries a key from the merchant. We store it with the merchant ID, the operation type, and a hash of the request. There is a unique constraint on the first three, so if two identical requests arrive together, only one inserts the key. The other one reads the existing record and returns its status. If the same key comes with a different amount, we reject it, because that is a client error.
 >
-> But the database constraint only protects us. If the bank captures the payment and we crash before saving the result, we need more. So we send a stable idempotency key to the bank, we keep the payment as pending, and we recover it by status query or reconciliation."
+> But the database constraint only protects us. If the bank captures the payment and we crash before saving the result, we need more. So we send a stable idempotency key to the bank, we keep the operation as pending, and we recover it by status query or reconciliation."
 
 ### 第 3 步：先落库和 outbox
 
@@ -325,11 +563,11 @@ COMMIT
 
 > "We don't resend the capture blindly. We keep the payment pending, tell the merchant it's in progress, and resolve it through the bank's reconciliation file or manual investigation."
 
-**对商户：** 拿到结果就同步返回；超时则返回 paymentId 和 PENDING（HTTP 202）。**不要**返回“失败，请重试”，商户用新 key 重试会重复扣款。
+**对商户：** 拿到结果就同步返回；超时则返回 processorTransactionId 和 PENDING（HTTP 202）。**不要**返回“失败，请重试”，商户用新 key 重试会重复扣款。
 
-> "When we call the bank, we always send the same idempotency key for the same operation, so a retry can't create a second charge. We set a short timeout per bank, with its own connection pool and a circuit breaker.
+> "When we call the bank, we always send the same idempotency key for the same operation, so a retry can't create a second charge or refund. We set a short timeout per bank, with its own connection pool and a circuit breaker.
 >
-> The result is one of three: success, failure, or unknown. A timeout is unknown, not a failure, because the bank may have processed the payment. In that case we keep the payment as pending and return the payment ID with a pending status. We never tell the merchant it failed.
+> The result is one of three: success, failure, or unknown. A timeout is unknown, not a failure, because the bank may have processed the payment. In that case we keep the operation as pending and return the processor transaction ID with a pending status. We never tell the merchant it failed.
 >
 > A recovery worker then checks the bank, using a status query or a callback. If the bank can't tell us, the daily reconciliation file is the final answer."
 
@@ -365,7 +603,7 @@ Webhook Worker：
 
 保证：至少一次投递。不保证：恰好一次、全局顺序。所以商户用 event ID 去重，必要时回查最新状态。
 
-> "If the bank answers in time, we return the final result in the response. If not, we return the payment ID with a pending status, and a webhook follows once the outcome is final.
+> "If the bank answers in time, we return the final result in the response. If not, we return the processor transaction ID with a pending status, and a webhook follows once the outcome is final.
 >
 > To make sure the webhook isn't lost, we save the status change and an outbox event in the same transaction. A worker sends the signed webhook and retries with exponential backoff and jitter. Delivery is at least once, so each event has a stable ID and the merchant deduplicates by it. Events can arrive out of order, so merchants can also query the payment for its current status."
 
@@ -415,11 +653,11 @@ Webhook Worker：
 
 ### 6.4 数据库扩展
 
-> "We shard by payment ID, so a payment and all its captures and refunds stay together. Then the refund balance check is a single local transaction. We use replicas for reads and reports, and archive old data to cheaper storage."
+> "We shard by processor transaction ID, so a transaction and all its captures and refunds stay together. Then the refund balance check is a single local transaction. We use replicas for reads and reports, and archive old data to cheaper storage."
 
 | 方案 | 优点 | 缺点 |
 | --- | --- | --- |
-| 按 payment ID 分片 | 负载均匀，余额检查本地事务 | 按商户查询需要二级索引或单独读库 |
+| 按 processorTransactionId 分片 | 负载均匀，余额检查本地事务 | 按商户查询需要二级索引或单独读库 |
 | 按 merchant ID 分片 | 商户查询方便 | 大商户导致热点分片 |
 
 - 读副本用于读取和报表。
@@ -461,7 +699,7 @@ Webhook Worker：
 flowchart LR
     M[Merchant] --> GW[API Gateway<br/>auth + rate limit]
     GW --> PS[Payment Service]
-    PS --> DB[(Relational DB<br/>sharded by payment ID<br/>payments, operations,<br/>reservations, outbox)]
+    PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>reservations, outbox)]
     DB --> PUB[Outbox Publisher]
     PUB --> Q[[Message Queue]]
     Q --> BW[Bank Workers<br/>recovery]
@@ -476,7 +714,7 @@ flowchart LR
     B2 -.settlement file.-> REC
 ```
 
-### 一笔 charge 的时序
+### 一次 authorization 的时序（capture、refund 流程相同）
 
 ```mermaid
 sequenceDiagram
@@ -486,9 +724,9 @@ sequenceDiagram
     participant BK as Bank
     participant WW as Webhook Worker
 
-    M->>API: POST /payments (Idempotency-Key)
+    M->>API: POST /v1/payments/authorizations (Idempotency-Key)
     API->>DB: txn: claim key + operation PENDING + outbox
-    API->>BK: charge (bank idempotency key = operationId)
+    API->>BK: authorize (bank idempotency key = operationId)
     alt answer within budget
         BK-->>API: approved / declined
         API->>DB: txn: update status + webhook outbox
@@ -522,7 +760,7 @@ sequenceDiagram
 
 ## 8. 一分钟总结稿
 
-> "A merchant sends a charge with an idempotency key. We save the operation in our database first, using a unique constraint, then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. Final results and webhook events are saved together, and workers deliver them with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one did not process the payment. We shard by payment ID, and monitor success rate and pending age. Reconciliation with bank files is our final safety net."
+> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, using a unique constraint, then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. Final results and webhook events are saved together, and workers deliver them with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one did not process the request. We shard by processor transaction ID, and monitor success rate and pending age. Reconciliation with bank files is our final safety net."
 
 ---
 
@@ -564,7 +802,7 @@ sequenceDiagram
 
 | 问题 | 答案要点 |
 | --- | --- |
-| How do you store 30 TB a year? | 按 payment ID 分片，读副本，旧数据归档但可查，保留到 chargeback 期限 |
+| How do you store 30 TB a year? | 按 processorTransactionId 分片，读副本，旧数据归档但可查，保留到 chargeback 期限 |
 | What if one merchant floods the system? | 按商户限流，429，独立队列或配额 |
 | A bank is slow? | 独立连接池、短超时、熔断器；转 pending，不阻塞其他支付 |
 | Switch to another bank on failure? | 仅在确认没处理时；结果未知时不切换 |
@@ -655,7 +893,7 @@ sequenceDiagram
 | 2 | 幂等 | 只说了数据库唯一键 | 还要请求指纹校验、银行幂等键、崩溃恢复；唯一键只保护我们自己 |
 | 3 | 同 key 不同内容 | “告诉客户请求不符合预期” | 方向对；明确返回 422 并说明原因 |
 | 4 | 同 key 并发 | 没有明确回答 | 第二个请求返回已有 operation 的 ID 和状态，不再调银行 |
-| 5 | API 响应 | 只有 requestKey 和 success/failed | paymentId、operationId、status（含 PENDING）、金额、币种、时间、错误码 |
+| 5 | API 响应 | 只有 requestKey 和 success/failed | processorTransactionId、operationId、status（含 PENDING）、金额、币种、时间、错误码 |
 | 6 | availability vs correctness | 先说 availability 最重要 | 开场就说：correctness 优先 |
 | 7 | 估算 | 差了 1000 倍（8M/天，300 GB） | 86.4M/天；1 KB 时约 86 GB/天，约 30 TB/年 |
 | 8 | 数据保留 | 一开始说可以按客户需求删除 | 要考虑监管、争议、chargeback；归档但可查 |
