@@ -93,7 +93,7 @@
 | 每条记录大小 | 假设 1 KB（请求体、状态、引用） | 1 KB |
 | 每天存储 | 86.4M × 1 KB | 约 86 GB |
 | 每年存储 | 86 GB × 365 | 约 30 TB |
-| 峰值写入 | 5,000 笔/秒，每笔含 operation、状态更新、outbox，约 3–5 次写 | 约 15,000–25,000 次写/秒 |
+| 峰值写入 | 5,000 笔/秒，每笔含 operation、状态更新、webhook 事件，约 3–5 次写 | 约 15,000–25,000 次写/秒 |
 
 **易错点：** 86.4M × 10 KB × 365 约等于 300 TB，不是 300 GB。先用 1 KB，说出假设再讲。
 
@@ -326,7 +326,7 @@ Idempotency-Key: refund-order-100-1
 | 币种不一致 | 422 | `CURRENCY_MISMATCH` |
 | 同一个 key 带了不同内容 | 422 | `IDEMPOTENCY_KEY_REUSED` |
 
-**并发控制（和 capture 不同）：** 退款可以多次、部分，所以不能只靠状态条件更新，要用**金额预留**：在短事务里锁住该交易的余额行，检查 `captured − 已退款 − 已预留`，预留金额，写入 operation 和 outbox，提交后再调银行。银行结果未知时不能释放预留。详见第 5 节“退款：并发时防止多退”。
+**并发控制（和 capture 不同）：** 退款可以多次、部分，所以不能只靠状态条件更新，要用**金额预留**：在短事务里锁住该交易的余额行，检查 `captured − 已退款 − 已预留`，预留金额，写入 operation（PENDING），提交后再调银行。银行结果未知时不能释放预留。详见第 5 节“退款：并发时防止多退”。
 
 **内部流程：** 走核心流程 6 步。调用银行时带上 capture 保存的**银行 capture 引用**，用 refund 自己的 `operationId` 作为银行幂等键。
 
@@ -399,7 +399,7 @@ idempotency_key
 balance_reservation             （仅退款预留金额；capture 用条件更新）
   reservation_id, processor_transaction_id, operation_id, amount, status
 
-outbox_event
+webhook_outbox                  （仅 webhook 事件）
   event_id, type, payload, status, created_at, sent_at
 
 state_transition_history        （审计：每次状态变化只追加）
@@ -435,7 +435,7 @@ stateDiagram-v2
 ```text
 1. 接收请求   认证商户，限流
 2. 幂等检查   数据库唯一键占位，校验请求指纹
-3. 先落库     一个事务写 key、operation、outbox，状态 PENDING
+3. 先落库     一个事务写 key 和 operation（PENDING）
 4. 调用银行   同一个银行幂等键，短超时
 5. 处理结果   成功 / 失败 / 未知
 6. 通知商户   同步返回结果，或 pending + webhook
@@ -491,7 +491,7 @@ stateDiagram-v2
 >
 > But the database constraint only protects us. If the bank captures the payment and we crash before saving the result, we need more. So we send a stable idempotency key to the bank, we keep the operation as pending, and we recover it by status query or reconciliation."
 
-### 第 3 步：先落库和 outbox
+### 第 3 步：先落库（key + PENDING）
 
 **为什么：** 调用银行是外部操作，不能回滚。必须先把“要做什么”持久化。
 
@@ -499,13 +499,19 @@ stateDiagram-v2
 BEGIN TRANSACTION
   1. 插入 idempotency key
   2. 插入 operation 记录，status = PENDING
-  3. 插入 outbox 事件 “执行 operation_123”
 COMMIT
 ```
 
-- **Durable operation record**：记录“我要做什么，现在是什么状态”。崩溃重启后，仍然知道哪些事没完成。
-- **Outbox**：把“要发的消息”和数据写进同一个事务。解决双写问题：写库成功后、发消息前崩溃，消息会丢。
-- Outbox 不等于 exactly-once。发送器可能在“已发出、未标记”时崩溃，消息会重复。所以 worker 要先看 operation 状态，银行调用要用幂等键。
+这个事务里只有两件事，各自解决一个问题：
+
+| 写什么 | 防什么 |
+| --- | --- |
+| 商户的 idempotency key（唯一键） | 商户重复提交同一个请求 |
+| operation，状态 PENDING（“我要调银行”的意图） | 我们崩溃后，忘了要调银行 |
+
+**PENDING 记录本身就是任务。** 崩溃重启后，恢复 worker 扫描超过一定时间的 PENDING 记录（`status, updated_at` 建索引），用 `SELECT ... FOR UPDATE SKIP LOCKED` 或租约认领，先向银行查询真实状态，再决定重试还是更新结果。不需要额外的 outbox 来调度“调银行”。
+
+> outbox 只用在第 6 步的 webhook：最终结果和 webhook 事件要同事务保存，而且投递有自己的重试状态。
 
 **同步优先：** API 提交后直接调银行，2–3 秒内拿到结果就返回；超时转 PENDING，后台继续。同步路径和后台 worker 用同一条 operation 和同一个银行幂等键，绝不各自创建扣款。
 
@@ -514,14 +520,12 @@ COMMIT
 | 崩溃位置 | 数据库里有什么 | 恢复 |
 | --- | --- | --- |
 | 事务提交前 | 什么都没有 | 商户用同一个 key 重试，按新请求处理 |
-| 提交后，调银行前 | PENDING + outbox 事件 | Publisher 重新发消息，worker 执行 |
-| 调银行后，保存结果前 | PENDING | 用银行幂等键重试，或查询、对账 |
+| 提交后，调银行前 | PENDING | 恢复 worker 扫到，先查银行状态，再用同一个银行幂等键调用 |
+| 调银行后，保存结果前 | PENDING | 恢复 worker 先查银行状态，或用银行幂等键重试，最后对账 |
 
-> "Before calling the bank, we write the operation to the database with the status pending. In the same transaction we write an outbox event. This way, if the service crashes after saving, a background publisher still finds the event and a worker continues the job, so nothing is lost.
->
-> Outbox doesn't give exactly-once delivery. The same event can be published twice, so the worker checks the operation status first, and the bank call uses an idempotency key."
+> "Before calling the bank, we save two things in one transaction: the merchant's idempotency key, and the operation with status pending. The key stops the merchant from submitting the same request twice. The pending row records our intention to call the bank, so if we crash, we don't forget. A recovery worker scans old pending operations, asks the bank for the real status first, and then continues. The bank call uses a stable idempotency key, so a retry can't charge twice."
 
-口诀：Save first, call later. One transaction. Recover by status.
+口诀：Save first, call later. Key + pending. Recover by status.
 
 ### 第 4–5 步：调用银行和处理结果
 
@@ -613,7 +617,7 @@ Webhook Worker：
 
 场景：已 capture £100，两个 £70 的退款，key 不同，同时到达。
 
-> "In a short database transaction, we lock the payment's balance row, check captured minus successful and reserved refunds, reserve £70, and create the refund operation and outbox event. We commit before calling the bank. The reservation stays while the outcome is unknown; we finalise it on success or release it on confirmed failure."
+> "In a short database transaction, we lock the payment's balance row, check captured minus successful and reserved refunds, reserve £70, and create the refund operation as pending. We commit before calling the bank. The reservation stays while the outcome is unknown; we finalise it on success or release it on confirmed failure."
 
 - 第一个预留 £70，剩 £30，第二个 £70 被拒。
 - 银行调用超时时**不能**释放预留，因为结果未知。
@@ -673,7 +677,7 @@ Webhook Worker：
 | --- | --- |
 | 业务 | 成功率、延迟分位数、PENDING 数量和年龄、webhook 失败（按银行、商户拆分） |
 | 银行 | 每个银行的错误率、熔断器状态 |
-| 系统 | 队列积压、outbox 积压和最老事件年龄、数据库健康 |
+| 系统 | webhook 积压和最老事件年龄、数据库健康 |
 | 追踪 | correlation ID、分布式 tracing |
 | 安全 | 日志中不记录卡数据 |
 
@@ -699,11 +703,9 @@ Webhook Worker：
 flowchart LR
     M[Merchant] --> GW[API Gateway<br/>auth + rate limit]
     GW --> PS[Payment Service]
-    PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>reservations, outbox)]
-    DB --> PUB[Outbox Publisher]
-    PUB --> Q[[Message Queue]]
-    Q --> BW[Bank Workers<br/>recovery]
-    Q --> WW[Webhook Workers]
+    PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>reservations, webhook outbox)]
+    DB --> BW[Recovery Workers<br/>scan PENDING]
+    DB --> WW[Webhook Workers<br/>read outbox]
     PS --> BA[Bank Adapter<br/>per-bank pool + circuit breaker]
     BW --> BA
     BA --> B1[Bank A]
@@ -725,7 +727,7 @@ sequenceDiagram
     participant WW as Webhook Worker
 
     M->>API: POST /v1/payments/authorizations (Idempotency-Key)
-    API->>DB: txn: claim key + operation PENDING + outbox
+    API->>DB: txn: claim key + operation PENDING
     API->>BK: authorize (bank idempotency key = operationId)
     alt answer within budget
         BK-->>API: approved / declined
@@ -772,7 +774,7 @@ sequenceDiagram
 | --- | --- |
 | How long do you keep the keys? | 一般 24 小时到几天，超期才允许复用；与商户约定，可配置 |
 | DB or Redis for the key? | 以数据库为准（持久、有事务）。Redis 只能做加速，不能作为唯一依据 |
-| What if the key is claimed but the service crashes before calling the bank? | 记录是 PENDING，通过 outbox，后台 worker 继续执行，不丢也不重复 |
+| What if the key is claimed but the service crashes before calling the bank? | 记录是 PENDING，恢复 worker 扫描后先查银行状态再继续，不丢也不重复 |
 | Who generates the key? | 商户生成。内部重试时用 operation ID 作为银行幂等键 |
 | Is idempotency exactly-once? | 不是。传输至少一次，效果只生效一次 |
 | Same key, different body? | 拒绝，返回 422，说明是客户端错误 |
@@ -809,7 +811,7 @@ sequenceDiagram
 | What if the merchant's server is down for hours? | 重试窗口内退避重试；超出后停止并告警，商户恢复后可重放或查询 |
 | Webhook order? | 不保证全局顺序；带版本或时间戳；商户可回查最新状态 |
 | What do you monitor? | 成功率、延迟、PENDING 数量和年龄、按银行和商户拆分；对症状告警 |
-| How do you handle an outbox backlog? | 监控积压和最老事件年龄；水平扩展 publisher |
+| How do you handle a webhook backlog? | 监控积压和最老事件年龄；水平扩展 webhook worker |
 | How do you roll back faulty payment logic? | 功能开关、灰度发布、快速回滚；操作幂等，状态可恢复；用对账修正已发生的错误 |
 
 ---
