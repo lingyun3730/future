@@ -262,7 +262,7 @@ Idempotency-Key: capture-order-100-1
 | 金额不等于授权额，或币种不一致 | 422 | `AMOUNT_MISMATCH` / `CURRENCY_MISMATCH` |
 | 同一个 key 带了不同内容 | 422 | `IDEMPOTENCY_KEY_REUSED` |
 
-**并发控制：** 条件更新 `UPDATE ... SET status='CAPTURING' WHERE status='AUTHORIZED'`。两个并发的 capture（不同 key）只有一个能更新成功，所以不需要金额预留表；另一个得到 409。同一个 key 的重复请求由幂等记录处理，返回已有结果。
+**并发控制：** 条件更新 `UPDATE ... SET status='CAPTURING' WHERE status='AUTHORIZED'`。两个并发的 capture（不同 key）只有一个能更新成功，所以不需要金额预留；另一个得到 409 `CAPTURE_IN_PROGRESS`（正在 capture）或 `ALREADY_CAPTURED`。银行**明确拒绝**时，状态改回 AUTHORIZED，商户可以用新 key 重试；结果未知时保持 CAPTURING。同一个 key 的重复请求由幂等记录处理，返回已有结果。
 
 **内部流程：** 走核心流程 6 步。调用银行时带上 auth 时保存的**银行授权引用**，用 capture 自己的 `operationId` 作为银行幂等键，保存银行返回的 capture 引用（供 refund 使用）。
 
@@ -326,7 +326,7 @@ Idempotency-Key: refund-order-100-1
 | 币种不一致 | 422 | `CURRENCY_MISMATCH` |
 | 同一个 key 带了不同内容 | 422 | `IDEMPOTENCY_KEY_REUSED` |
 
-**并发控制（和 capture 不同）：** 退款可以多次、部分，所以不能只靠状态条件更新，要用**金额预留**：在短事务里锁住该交易的余额行，检查 `captured − 已退款 − 已预留`，预留金额，写入 operation（PENDING），提交后再调银行。银行结果未知时不能释放预留。详见第 5 节“退款：并发时防止多退”。
+**并发控制（和 capture 不同）：** 退款可以多次、部分，所以不能只靠状态条件更新，要用**金额预留**：在短事务里锁住 transaction 行（`SELECT ... FOR UPDATE`），检查 `captured_amount − refunded_amount − refund_pending_amount ≥ 本次金额`，把 `refund_pending_amount` 加上本次金额，同事务写入 key 和 refund operation（PENDING），提交后再调银行。预留不需要单独的表：transaction 上的计数器加上 PENDING 的 refund operation 就是预留。成功时 pending 转入 refunded；明确失败时 pending 减回；结果未知时不能释放。详见第 5 节“退款：并发时防止多退”。
 
 **内部流程：** 走核心流程 6 步。调用银行时带上 capture 保存的**银行 capture 引用**，用 refund 自己的 `operationId` 作为银行幂等键。
 
@@ -384,7 +384,8 @@ GET /v1/payments/{processorTransactionId}
 ```text
 transaction                     （一个 processorTransactionId 一条，从 auth 开始）
   processor_transaction_id, merchant_id, currency, authorized_amount,
-  captured_amount, refunded_amount, status, auth_expires_at,
+  captured_amount, refunded_amount, refund_pending_amount,
+  status, auth_expires_at,
   bank_auth_reference, bank_capture_reference, created_at
 
 operation                       （每次 authorize / capture / refund 一条）
@@ -396,9 +397,6 @@ idempotency_key
   merchant_id, operation_type, idempotency_key   （联合唯一）
   request_hash, operation_id, response
 
-balance_reservation             （仅退款预留金额；capture 用条件更新）
-  reservation_id, processor_transaction_id, operation_id, amount, status
-
 webhook_outbox                  （仅 webhook 事件）
   event_id, type, payload, status, created_at, sent_at
 
@@ -409,6 +407,9 @@ state_transition_history        （审计：每次状态变化只追加）
 要点：
 
 - **transaction 和 operation 分开**：支持多次部分退款，不覆盖历史。
+- **预留 = transaction 上的计数器**（`refund_pending_amount`）+ PENDING 的 operation，不需要单独的预留表。
+- **transaction 状态**：`AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
+- **operation 状态和 API 状态的对应**：operation 内部是 PENDING / UNKNOWN / SUCCESS / FAILED；对外 SUCCESS 显示为 AUTHORIZED / CAPTURED / REFUNDED，FAILED 显示为 DECLINED / FAILED，PENDING 和 UNKNOWN 都显示为 PENDING。
 - **追加式历史**：状态变化只追加，不修改旧记录。
 - **同一 processorTransactionId 的数据在同一个分片**：余额检查在一个本地事务里完成。
 
@@ -425,6 +426,8 @@ stateDiagram-v2
     SUCCESS --> [*]
     FAILED --> [*]
 ```
+
+说明：PENDING = 已落库，还没有拿到银行答复（包括还没调、正在调）；UNKNOWN = 已发出请求但结果不明。恢复 worker 两种都扫描。
 
 规则：只有明确结果才能进入终态；SUCCESS 和 FAILED 不能再改变；更新用条件 UPDATE（`WHERE status = 'PENDING'`）或乐观锁。
 
@@ -502,14 +505,14 @@ BEGIN TRANSACTION
 COMMIT
 ```
 
-这个事务里只有两件事，各自解决一个问题：
+这个事务里只有两件事，各自解决一个问题（退款额外在同一事务里更新预留计数，见下文“退款”）：
 
 | 写什么 | 防什么 |
 | --- | --- |
 | 商户的 idempotency key（唯一键） | 商户重复提交同一个请求 |
 | operation，状态 PENDING（“我要调银行”的意图） | 我们崩溃后，忘了要调银行 |
 
-**PENDING 记录本身就是任务。** 崩溃重启后，恢复 worker 扫描超过一定时间的 PENDING 记录（`status, updated_at` 建索引），用 `SELECT ... FOR UPDATE SKIP LOCKED` 或租约认领，先向银行查询真实状态，再决定重试还是更新结果。不需要额外的 outbox 来调度“调银行”。
+**PENDING 记录本身就是任务。** 崩溃重启后，恢复 worker 扫描超过一定时间的 PENDING 记录（`status, updated_at` 建索引），用 `SELECT ... FOR UPDATE SKIP LOCKED` 或租约认领，先向银行查询真实状态，再决定重试还是更新结果。只扫描超过同步预算的记录，避免和仍在等银行的请求线程抢；即使抢到，同一个银行幂等键也保证不会重复处理。不需要额外的 outbox 来调度“调银行”。
 
 > outbox 只用在第 6 步的 webhook：最终结果和 webhook 事件要同事务保存，而且投递有自己的重试状态。
 
@@ -543,8 +546,8 @@ COMMIT
 | 结果 | 判断 | 状态 | 处理 |
 | --- | --- | --- | --- |
 | 明确成功 | 银行批准 | SUCCESS | 保存银行引用号，通知商户 |
-| 明确失败 | 银行拒绝（余额不足、卡无效） | FAILED | 通知商户，释放预留 |
-| 未知 | 超时、断连、5xx、崩溃 | PENDING / UNKNOWN | 保持预留，不盲目重试，走恢复 |
+| 明确失败 | 银行拒绝（余额不足、卡无效） | FAILED | 通知商户，退款则释放预留 |
+| 未知 | 超时、断连、5xx、崩溃 | PENDING / UNKNOWN | 退款保持预留，不盲目重试，走恢复 |
 
 > **超时 = 未知，不是失败。**
 
@@ -581,7 +584,7 @@ COMMIT
 
 - 同步响应：在预算内拿到结果就直接返回最终状态。
 - 异步 webhook：超时、PENDING，或之后状态变化。
-- 商户也可以随时 `GET /payments/{id}` 查询，作为兜底。
+- 商户也可以随时 `GET /v1/payments/{processorTransactionId}` 查询，作为兜底。
 
 ```text
 同一个数据库事务：
@@ -617,9 +620,9 @@ Webhook Worker：
 
 场景：已 capture £100，两个 £70 的退款，key 不同，同时到达。
 
-> "In a short database transaction, we lock the payment's balance row, check captured minus successful and reserved refunds, reserve £70, and create the refund operation as pending. We commit before calling the bank. The reservation stays while the outcome is unknown; we finalise it on success or release it on confirmed failure."
+> "In a short database transaction, we lock the transaction row, check captured minus refunded and pending refunds, reserve £70, and create the refund operation as pending. We commit before calling the bank. The reservation stays while the outcome is unknown; we finalise it on success or release it on confirmed failure."
 
-- 第一个预留 £70，剩 £30，第二个 £70 被拒。
+- 第一个预留 £70（`refund_pending_amount` = 70），剩 £30，第二个 £70 被拒。
 - 银行调用超时时**不能**释放预留，因为结果未知。
 - 不要在调用银行期间一直持有行锁。
 
@@ -703,7 +706,7 @@ Webhook Worker：
 flowchart LR
     M[Merchant] --> GW[API Gateway<br/>auth + rate limit]
     GW --> PS[Payment Service]
-    PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>reservations, webhook outbox)]
+    PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>webhook outbox)]
     DB --> BW[Recovery Workers<br/>scan PENDING]
     DB --> WW[Webhook Workers<br/>read outbox]
     PS --> BA[Bank Adapter<br/>per-bank pool + circuit breaker]
@@ -790,15 +793,17 @@ sequenceDiagram
 | What if a callback arrives before the sync response returns? | 都按 operation ID 更新同一条记录，状态机限制合法转换，更新幂等 |
 | Two workers update the same operation? | 条件 UPDATE 或乐观锁，只有一个生效 |
 | Why not hold a DB transaction during the bank call? | 长事务占连接和锁；银行调用无法随数据库回滚 |
-| Why not publish to Kafka directly? | 写库和发消息是两个系统，不能放进同一事务，中间崩溃会丢消息（双写问题）|
+| Why a webhook outbox instead of sending directly? | 状态更新和发 webhook 是两个系统，不能放进同一事务，中间崩溃会丢通知（双写问题）；outbox 同事务保存，worker 负责重试 |
+| Why no outbox for the bank call? | PENDING 的 operation 就是任务；恢复 worker 扫描它，先查银行再继续 |
 
 ### 退款与账务
 
 | 问题 | 答案要点 |
 | --- | --- |
-| Two concurrent refunds? | 短事务里锁余额行，检查并预留，再调银行；预留直到结果明确才释放 |
+| Two concurrent refunds? | 短事务里锁 transaction 行，检查 captured − refunded − pending，增加 pending，再调银行；预留直到结果明确才释放 |
+| Two concurrent captures? | 条件更新 AUTHORIZED → CAPTURING，只有一个成功 |
 | How do you keep an audit trail? | 追加式状态历史，更正用新的调整记录，不改旧记录 |
-| Partial capture and refund? | payment 与 operation 分开，每个 operation 有自己的金额和状态 |
+| Partial refunds? | transaction 与 operation 分开，每个 refund 有自己的金额和状态；capture 只支持一次全额 |
 
 ### 规模与运维
 
