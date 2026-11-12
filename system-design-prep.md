@@ -93,7 +93,7 @@
 | 每条记录大小 | 假设 1 KB（请求体、状态、引用） | 1 KB |
 | 每天存储 | 86.4M × 1 KB | 约 86 GB |
 | 每年存储 | 86 GB × 365 | 约 30 TB |
-| 峰值写入 | 5,000 笔/秒，每笔含 operation、状态更新、webhook 事件，约 3–5 次写 | 约 15,000–25,000 次写/秒 |
+| 峰值写入 | 5,000 笔/秒，每笔含 operation 插入、状态更新、transaction 更新、状态历史，约 3–5 次写（webhook 事件只有异步结果才有） | 约 15,000–25,000 次写/秒 |
 
 **易错点：** 86.4M × 10 KB × 365 约等于 300 TB，不是 300 GB。先用 1 KB，说出假设再讲。
 
@@ -421,7 +421,8 @@ How they work together:
 
 ```text
 Request      → idempotency_key (claim) + operation (PENDING)       one transaction
-               (refund also updates transaction.refund_pending_amount)
+               + transaction (auth: insert AUTHORIZING; capture: AUTHORIZED→CAPTURING;
+                 refund: refund_pending_amount += amount)
 Call bank
 Result       → operation (SUCCESS / FAILED) + transaction counters/status
                + state_transition_history
@@ -438,7 +439,7 @@ Notes:
 
 - **transaction 和 operation 分开**：支持多次部分退款，不覆盖历史。
 - **预留 = transaction 上的计数器**（`refund_pending_amount`）+ PENDING 的 operation，不需要单独的预留表。
-- **transaction 状态**：`AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
+- **transaction 状态**：`AUTHORIZING → AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`（不用定时任务，capture 时检查 `now > auth_expires_at`，过期则返回 409）；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
 - **operation 状态和 API 状态的对应**：operation 内部是 PENDING / UNKNOWN / SUCCESS / FAILED；对外 SUCCESS 显示为 AUTHORIZED / CAPTURED / REFUNDED，FAILED 显示为 DECLINED / FAILED，PENDING 和 UNKNOWN 都显示为 PENDING。
 - **追加式历史**：状态变化只追加，不修改旧记录。
 - **同一 processorTransactionId 的数据在同一个分片**：余额检查在一个本地事务里完成。
@@ -532,10 +533,17 @@ stateDiagram-v2
 BEGIN TRANSACTION
   1. 插入 idempotency key
   2. 插入 operation 记录，status = PENDING
+  3. 更新 transaction（见下表，每种操作不同）
 COMMIT
 ```
 
-这个事务里只有两件事，各自解决一个问题（退款额外在同一事务里更新预留计数，见下文“退款”）：
+| 操作 | 第 3 项对 transaction 做什么 |
+| --- | --- |
+| authorization | 插入新行，status = `AUTHORIZING` |
+| capture | 条件更新 `AUTHORIZED → CAPTURING`，失败则 409 |
+| refund | 锁行，检查可退金额，`refund_pending_amount` 加上本次金额，失败则 422 |
+
+核心是两件事，各自解决一个问题（transaction 的更新是为了让并发控制和 operation 同时生效）：
 
 | 写什么 | 防什么 |
 | --- | --- |
