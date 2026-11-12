@@ -402,13 +402,15 @@ webhook_outbox                  （仅异步结果的 webhook 事件）
 
 ### Tables in English
 
-Three core tables. There is no separate idempotency table: each merchant key maps to exactly one operation, so the key lives on the operation row.
+Three core tables, plus an optional audit table. There is no separate idempotency table: each merchant key maps to exactly one operation, so the key lives on the operation row.
 
 | Table | One row is... | Purpose |
 | --- | --- | --- |
 | `transaction` | One `processorTransactionId`, created at authorization | The **current state** of a payment. Holds the status and the amount counters (`authorized_amount`, `captured_amount`, `refunded_amount`, `refund_pending_amount`) and the bank references from auth and capture. It is mutable, and it is the lock point: concurrent captures use a conditional status update, and concurrent refunds lock this row to check and reserve the refundable balance. |
 | `operation` | One authorize, capture or refund call | The **record of what we were asked to do**, with its type, amount, status (PENDING / UNKNOWN / SUCCESS / FAILED), bank idempotency key and bank reference. It also does idempotency: the unique constraint on `(merchant_id, type, idempotency_key)` lets only one request claim the key, `request_hash` detects the same key with a different body, and `response` is replayed on a duplicate. A PENDING row is the task itself: if we crash, the recovery worker scans old PENDING rows, asks the bank for the real status, and continues. Foreign key: `processor_transaction_id` → `transaction`. |
 | `webhook_outbox` | One webhook event for a merchant | Used only when the merchant did not get the final result in the response (we returned pending, and the result came later). Written in the same transaction as the final status, so a result is never saved without its notification. A worker delivers it with a signature and retries with backoff; `status`, `attempts` and `next_attempt_at` track delivery. Foreign keys: `operation_id`, `processor_transaction_id`. |
+
+Optional: `operation_status_history` is append-only (insert only): operation ID, from status, to status, reason, time. The operation's identity and amounts never change, but its `status` is updated in place with a conditional update, so only valid transitions are allowed. The history table keeps the full trail for audit and debugging without making the hot path more complex.
 
 How they work together:
 
@@ -434,7 +436,15 @@ Notes:
 - **transaction 状态**：`AUTHORIZING → AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`（不用定时任务，capture 时检查 `now > auth_expires_at`，过期则返回 409）；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
 - **operation 状态和 API 状态的对应**：operation 内部是 PENDING / UNKNOWN / SUCCESS / FAILED；对外 SUCCESS 显示为 AUTHORIZED / CAPTURED / REFUNDED，FAILED 显示为 DECLINED / FAILED，PENDING 和 UNKNOWN 都显示为 PENDING。
 - **幂等放在 operation 上**：一个 key 对应一个 operation，唯一约束 `(merchant_id, type, idempotency_key)` 就是占位。key 只在约定的窗口内（如 24 小时）有效；operation 保留更久，所以超过窗口的 key 不再当作重复。被 400/422 拒绝的请求没有 operation，也就不保存 key。
-- **审计**：operation 是每次操作的不可变记录（金额、状态、银行引用）；transaction 只保存当前状态。
+- **operation 的状态是原地更新**：身份和金额字段不变（类型、金额、币种、幂等 key、请求指纹、银行幂等键），`status`、`bank_reference`、`response`、`updated_at` 会变，用条件更新保证只有合法转换。
+- **审计（可选的第四张表）**：每次状态变化再追加一条记录，只插入、不修改，这样热路径保持简单，又有完整历史。
+
+```text
+operation_status_history        （可选，仅追加）
+  operation_id, from_status, to_status, reason, at
+```
+
+  真正严格的追加式是账务（ledger，每笔资金变动一条分录），不在本题范围内。
 - **同一 processorTransactionId 的数据在同一个分片**：余额检查在一个本地事务里完成。
 
 ### 状态机
@@ -700,6 +710,12 @@ Webhook Worker：
 - token bucket，按商户。
 - 独立队列或配额，避免大商户突发占满容量。
 - 所有查询和缓存 key 都带 tenant。
+- 限流按合同设置速率和突发额度；上游限流也保护了数据库，一个商户写不了无限多。
+- 连接池和 worker 容量按商户分配份额，防止突发饿死恢复 worker 和 webhook worker。
+
+**流量不均和数据不均是两个问题：** 流量靠网关限流，数据分布靠分片键。**不要把同一个商户的交易放进同一个分片。**
+
+> "At the gateway, each merchant has its own rate limit based on the contract. For the database, I would not shard by merchant, because big merchants would create hot shards. We shard by transaction ID, so even one large merchant spreads across all shards, and each payment with its operations stays on one shard, which keeps the refund balance check a local transaction. The trade-off is that merchant-level queries are cross-shard, so we serve those from a read store or secondary index fed by change data capture. If a merchant needs isolation or data residency, we can give it a dedicated shard group through a small directory."
 
 ### 6.4 数据库扩展
 
@@ -708,7 +724,18 @@ Webhook Worker：
 | 方案 | 优点 | 缺点 |
 | --- | --- | --- |
 | 按 processorTransactionId 分片 | 负载均匀，余额检查本地事务 | 按商户查询需要二级索引或单独读库 |
-| 按 merchant ID 分片 | 商户查询方便 | 大商户导致热点分片 |
+| 按 merchant ID 分片 | 商户查询方便 | 大商户（如占 30% 流量）落在一个分片，成为热点，可能放不下，还要重新分片 |
+
+**为什么不按商户分片：** 我们的工作单位是一笔付款，一笔付款不需要另一笔付款的数据，所以可以按付款打散。大商户的交易会均匀分布到所有分片。
+
+**auth 没有 ID：** 按 `hash(merchant_id, idempotency_key)` 路由，同样能打散大商户的流量，并保证同一个 key 重试落在同一个分片。
+
+**代价和处理：** 按商户的查询（列表、报表、对账）会跨分片。用**二级索引或读库**（搜索索引、读副本、数据仓库），通过 CDC 从主库同步，按商户建键；`GET /payments/{id}` 不受影响，因为分片号在 ID 里。
+
+**什么时候考虑按商户放置：**
+
+- 数据驻留或合规：某些商户的数据必须留在特定区域。
+- 超大商户（noisy whale）：用一个小的目录（merchant → shard group）给它**专用分片组**，其他商户仍按哈希分片。这是优化，不是默认。
 
 - 读副本用于读取和报表。
 - 旧数据归档但仍可查。
@@ -845,7 +872,7 @@ sequenceDiagram
 | --- | --- |
 | Two concurrent refunds? | 短事务里锁 transaction 行，检查 captured − refunded − pending，增加 pending，再调银行；预留直到结果明确才释放 |
 | Two concurrent captures? | 条件更新 AUTHORIZED → CAPTURING，只有一个成功 |
-| How do you keep an audit trail? | operation 是每次操作的记录，不改旧记录；更正用新的调整记录；对账时可用 operation 重算 transaction 的计数器 |
+| How do you keep an audit trail? | operation 状态原地更新，另有追加式的状态历史表（只插入）；更正用新的调整记录，不改旧记录；对账时用 operation 重算 transaction 的计数器 |
 | Partial refunds? | transaction 与 operation 分开，每个 refund 有自己的金额和状态；capture 只支持一次全额 |
 
 ### 规模与运维
