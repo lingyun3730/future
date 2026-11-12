@@ -44,6 +44,34 @@ Client -> API Gateway (rate limit check) -> Payment Service
 - Not `limit / N` per node: uneven traffic would block valid requests.
 - Not sticky routing: bad for failover and load balancing.
 
+### If I'm asked about Redis experience (be honest)
+> "I haven't run Redis in production, but I know why it fits: it's in-memory, runs commands one at a time, and supports atomic scripts. It's the same idea as my conditional UPDATE on a DB row, but in memory for speed."
+
+Redis in 5 points (enough for the interview):
+1. In-memory key-value store, sub-millisecond reads and writes.
+2. Commands run one at a time, so no races inside Redis.
+3. A Lua script is atomic: several operations run as one step.
+4. TTL: keys expire by themselves (idle merchants get cleaned up).
+5. Cluster shards by key. One bucket = one key, so it scales, and a hot key is the main risk.
+
+Without Redis (alternative answers):
+- DB conditional UPDATE: correct, but too slow to hit on every request.
+- Local token bucket per gateway node + periodic sync: no external dependency, slightly less exact.
+
+Appendix: Lua sketch (do not memorize, just know the 3 steps: refill, take token if enough, write back).
+```lua
+-- KEYS[1]=bucket key; ARGV: rate/sec, capacity, now_ms, cost
+local d = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(d[1]) or tonumber(ARGV[2])
+local ts = tonumber(d[2]) or tonumber(ARGV[3])
+tokens = math.min(ARGV[2], tokens + (ARGV[3] - ts) / 1000 * ARGV[1])
+local ok = 0
+if tokens >= tonumber(ARGV[4]) then tokens = tokens - ARGV[4]; ok = 1 end
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], 2 * math.ceil(ARGV[2] / ARGV[1] * 1000))
+return ok
+```
+
 ## 5. Failure handling
 - Redis slow or down → **fail open** with a short timeout (e.g. 5 ms).
 - Fall back to a coarse local in-memory limit, and alert.
