@@ -93,7 +93,7 @@
 | 每条记录大小 | 假设 1 KB（请求体、状态、引用） | 1 KB |
 | 每天存储 | 86.4M × 1 KB | 约 86 GB |
 | 每年存储 | 86 GB × 365 | 约 30 TB |
-| 峰值写入 | 5,000 笔/秒，每笔含 operation、状态更新、webhook 事件，约 3–5 次写 | 约 15,000–25,000 次写/秒 |
+| 峰值写入 | 5,000 笔/秒，每笔含 operation 插入、状态更新、transaction 更新、状态历史，约 3–5 次写（webhook 事件只有异步结果才有） | 约 15,000–25,000 次写/秒 |
 
 **易错点：** 86.4M × 10 KB × 365 约等于 300 TB，不是 300 GB。先用 1 KB，说出假设再讲。
 
@@ -388,29 +388,53 @@ transaction                     （一个 processorTransactionId 一条，从 au
   status, auth_expires_at,
   bank_auth_reference, bank_capture_reference, created_at
 
-operation                       （每次 authorize / capture / refund 一条）
+operation                       （每次 authorize / capture / refund 一条，同时承担幂等）
   operation_id, processor_transaction_id, type, amount, currency,
   status, bank_id, bank_reference, bank_idempotency_key,
+  merchant_id, idempotency_key, request_hash, response,
   created_at, updated_at
+  UNIQUE (merchant_id, type, idempotency_key)
 
-idempotency_key
-  merchant_id, operation_type, idempotency_key   （联合唯一）
-  request_hash, operation_id, response
-
-webhook_outbox                  （仅 webhook 事件）
-  event_id, type, payload, status, created_at, sent_at
-
-state_transition_history        （审计：每次状态变化只追加）
-  operation_id, from_status, to_status, reason, at
+webhook_outbox                  （仅异步结果的 webhook 事件）
+  event_id, merchant_id, processor_transaction_id, operation_id,
+  type, payload, status, attempts, next_attempt_at, created_at, sent_at
 ```
+
+### Tables in English
+
+Three core tables. There is no separate idempotency table: each merchant key maps to exactly one operation, so the key lives on the operation row.
+
+| Table | One row is... | Purpose |
+| --- | --- | --- |
+| `transaction` | One `processorTransactionId`, created at authorization | The **current state** of a payment. Holds the status and the amount counters (`authorized_amount`, `captured_amount`, `refunded_amount`, `refund_pending_amount`) and the bank references from auth and capture. It is mutable, and it is the lock point: concurrent captures use a conditional status update, and concurrent refunds lock this row to check and reserve the refundable balance. |
+| `operation` | One authorize, capture or refund call | The **record of what we were asked to do**, with its type, amount, status (PENDING / UNKNOWN / SUCCESS / FAILED), bank idempotency key and bank reference. It also does idempotency: the unique constraint on `(merchant_id, type, idempotency_key)` lets only one request claim the key, `request_hash` detects the same key with a different body, and `response` is replayed on a duplicate. A PENDING row is the task itself: if we crash, the recovery worker scans old PENDING rows, asks the bank for the real status, and continues. Foreign key: `processor_transaction_id` → `transaction`. |
+| `webhook_outbox` | One webhook event for a merchant | Used only when the merchant did not get the final result in the response (we returned pending, and the result came later). Written in the same transaction as the final status, so a result is never saved without its notification. A worker delivers it with a signature and retries with backoff; `status`, `attempts` and `next_attempt_at` track delivery. Foreign keys: `operation_id`, `processor_transaction_id`. |
+
+How they work together:
+
+```text
+Request      → operation (PENDING, claims the idempotency key)    one transaction
+               + transaction (auth: insert AUTHORIZING; capture: AUTHORIZED→CAPTURING;
+                 refund: refund_pending_amount += amount)
+Call bank
+Result       → operation (SUCCESS / FAILED) + transaction counters/status
+               + webhook_outbox, only if the merchant already got a pending response
+                                                                   one transaction
+```
+
+Notes:
+
+- Foreign keys are logical (enforced by code, no database constraint), and only hold inside one shard.
+- **Shard routing:** capture and refund route by the shard encoded in `processorTransactionId`. Authorization has no ID yet, so route by `hash(merchant_id, idempotency_key)` and generate the ID on that shard, with the shard number inside it. Then a retry of the same auth key always reaches the same shard, so the unique constraint works.
 
 要点：
 
 - **transaction 和 operation 分开**：支持多次部分退款，不覆盖历史。
 - **预留 = transaction 上的计数器**（`refund_pending_amount`）+ PENDING 的 operation，不需要单独的预留表。
-- **transaction 状态**：`AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
+- **transaction 状态**：`AUTHORIZING → AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`（不用定时任务，capture 时检查 `now > auth_expires_at`，过期则返回 409）；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
 - **operation 状态和 API 状态的对应**：operation 内部是 PENDING / UNKNOWN / SUCCESS / FAILED；对外 SUCCESS 显示为 AUTHORIZED / CAPTURED / REFUNDED，FAILED 显示为 DECLINED / FAILED，PENDING 和 UNKNOWN 都显示为 PENDING。
-- **追加式历史**：状态变化只追加，不修改旧记录。
+- **幂等放在 operation 上**：一个 key 对应一个 operation，唯一约束 `(merchant_id, type, idempotency_key)` 就是占位。key 只在约定的窗口内（如 24 小时）有效；operation 保留更久，所以超过窗口的 key 不再当作重复。被 400/422 拒绝的请求没有 operation，也就不保存 key。
+- **审计**：operation 是每次操作的不可变记录（金额、状态、银行引用）；transaction 只保存当前状态。
 - **同一 processorTransactionId 的数据在同一个分片**：余额检查在一个本地事务里完成。
 
 ### 状态机
@@ -429,7 +453,7 @@ stateDiagram-v2
 
 说明：PENDING = 已落库，还没有拿到银行答复（包括还没调、正在调）；UNKNOWN = 已发出请求但结果不明。恢复 worker 两种都扫描。
 
-规则：只有明确结果才能进入终态；SUCCESS 和 FAILED 不能再改变；更新用条件 UPDATE（`WHERE status = 'PENDING'`）或乐观锁。
+规则：只有明确结果才能进入终态；SUCCESS 和 FAILED 不能再改变；更新用条件 UPDATE（`WHERE status IN ('PENDING', 'UNKNOWN')`）或乐观锁。
 
 ---
 
@@ -438,7 +462,7 @@ stateDiagram-v2
 ```text
 1. 接收请求   认证商户，限流
 2. 幂等检查   数据库唯一键占位，校验请求指纹
-3. 先落库     一个事务写 key 和 operation（PENDING）
+3. 先落库     一个事务写 operation（PENDING，带幂等 key）并更新 transaction
 4. 调用银行   同一个银行幂等键，短超时
 5. 处理结果   成功 / 失败 / 未知
 6. 通知商户   同步返回结果，或 pending + webhook
@@ -471,12 +495,12 @@ stateDiagram-v2
 
 | 情况 | 处理 |
 | --- | --- |
-| 新 key | 插入成功，继续处理 |
+| 新 key | 第 3 步插入 operation 成功（唯一约束占位），继续处理 |
 | 同 key、同内容、已完成 | 返回保存的结果 |
 | 同 key、同内容、处理中 | 返回已有 operation ID 和当前状态，不再调用银行 |
 | 同 key、不同内容 | 拒绝，返回 422 |
 
-**并发重复：** 两个请求同时 insert，唯一约束保证只有一个成功，另一个读取已有记录。不要“先查再插”，会有竞态。
+**并发重复：** 第 2 步和第 3 步在实现上是**同一次 insert**：直接插入 operation，成功就是占位成功；唯一约束冲突就是重复，读取已有记录，按上表处理。不要“先查再插”，会有竞态。
 
 **最关键的一点：数据库唯一键只保护我们自己的系统，保护不了银行那一侧。**
 
@@ -494,23 +518,30 @@ stateDiagram-v2
 >
 > But the database constraint only protects us. If the bank captures the payment and we crash before saving the result, we need more. So we send a stable idempotency key to the bank, we keep the operation as pending, and we recover it by status query or reconciliation."
 
-### 第 3 步：先落库（key + PENDING）
+### 第 3 步：先落库（operation = key + PENDING）
 
 **为什么：** 调用银行是外部操作，不能回滚。必须先把“要做什么”持久化。
 
 ```text
 BEGIN TRANSACTION
-  1. 插入 idempotency key
-  2. 插入 operation 记录，status = PENDING
+  1. 插入 operation 记录，status = PENDING
+     （带 merchant_id、idempotency_key、request_hash；唯一约束就是占位）
+  2. 更新 transaction（见下表，每种操作不同）
 COMMIT
 ```
 
-这个事务里只有两件事，各自解决一个问题（退款额外在同一事务里更新预留计数，见下文“退款”）：
+| 操作 | 第 2 项对 transaction 做什么 |
+| --- | --- |
+| authorization | 插入新行，status = `AUTHORIZING` |
+| capture | 条件更新 `AUTHORIZED → CAPTURING`，失败则 409 |
+| refund | 锁行，检查可退金额，`refund_pending_amount` 加上本次金额，失败则 422 |
+
+这一行 operation 同时解决两个问题；transaction 的更新是为了让并发控制和 operation 同时生效：
 
 | 写什么 | 防什么 |
 | --- | --- |
-| 商户的 idempotency key（唯一键） | 商户重复提交同一个请求 |
-| operation，状态 PENDING（“我要调银行”的意图） | 我们崩溃后，忘了要调银行 |
+| operation 上的 idempotency key（唯一约束） | 商户重复提交同一个请求 |
+| operation 的状态 PENDING（“我要调银行”的意图） | 我们崩溃后，忘了要调银行 |
 
 **PENDING 记录本身就是任务。** 崩溃重启后，恢复 worker 扫描超过一定时间的 PENDING 记录（`status, updated_at` 建索引），用 `SELECT ... FOR UPDATE SKIP LOCKED` 或租约认领，先向银行查询真实状态，再决定重试还是更新结果。只扫描超过同步预算的记录，避免和仍在等银行的请求线程抢；即使抢到，同一个银行幂等键也保证不会重复处理。不需要额外的 outbox 来调度“调银行”。
 
@@ -526,7 +557,7 @@ COMMIT
 | 提交后，调银行前 | PENDING | 恢复 worker 扫到，先查银行状态，再用同一个银行幂等键调用 |
 | 调银行后，保存结果前 | PENDING | 恢复 worker 先查银行状态，或用银行幂等键重试，最后对账 |
 
-> "Before calling the bank, we save two things in one transaction: the merchant's idempotency key, and the operation with status pending. The key stops the merchant from submitting the same request twice. The pending row records our intention to call the bank, so if we crash, we don't forget. A recovery worker scans old pending operations, asks the bank for the real status first, and then continues. The bank call uses a stable idempotency key, so a retry can't charge twice."
+> "Before calling the bank, we save one operation row with status pending, in one transaction with the transaction update. The row carries the merchant's idempotency key under a unique constraint, which stops the merchant from submitting the same request twice. The pending status records our intention to call the bank, so if we crash, we don't forget. A recovery worker scans old pending operations, asks the bank for the real status first, and then continues. The bank call uses a stable idempotency key, so a retry can't charge twice."
 
 口诀：Save first, call later. Key + pending. Recover by status.
 
@@ -564,11 +595,21 @@ COMMIT
 2. 等银行回调。
 3. 兜底：每日对账文件。
 
-恢复 worker 定期扫描超过 N 秒的 PENDING：查询银行 → 明确结果就更新并发 webhook → 仍未知则退避重试 → 超过上限转人工。
+恢复 worker 定期扫描超过 N 秒的 PENDING / UNKNOWN：查询银行 → 明确结果就更新并发 webhook → 仍未知则退避重试 → 超过上限转人工。
 
 **如果银行既无幂等键又无状态查询：**
 
 > "We don't resend the capture blindly. We keep the payment pending, tell the merchant it's in progress, and resolve it through the bank's reconciliation file or manual investigation."
+
+**结果落库（同一个事务，三种操作各不同）：**
+
+| 操作 | 银行成功 | 银行明确失败 | 结果未知 |
+| --- | --- | --- | --- |
+| authorization | operation SUCCESS，transaction → `AUTHORIZED`，保存银行授权引用 | operation FAILED，transaction → `DECLINED` | 保持 `AUTHORIZING` |
+| capture | operation SUCCESS，transaction → `CAPTURED`，`captured_amount` 写入，保存 capture 引用 | operation FAILED，transaction 回到 `AUTHORIZED` | 保持 `CAPTURING` |
+| refund | operation SUCCESS，`refund_pending_amount` 减、`refunded_amount` 加 | operation FAILED，`refund_pending_amount` 减回 | 保持预留 |
+
+同时把最终响应保存到 operation 的 `response`，之后同一个 key 重放就返回它。
 
 **对商户：** 拿到结果就同步返回；超时则返回 processorTransactionId 和 PENDING（HTTP 202）。**不要**返回“失败，请重试”，商户用新 key 重试会重复扣款。
 
@@ -583,14 +624,16 @@ COMMIT
 ### 第 6 步：通知商户
 
 - 同步响应：在预算内拿到结果就直接返回最终状态。
-- 异步 webhook：超时、PENDING，或之后状态变化。
+- 异步 webhook：只在商户没拿到最终结果时发（已经返回 202 PENDING，之后结果才出来）。同步成功不写 outbox。响应在网络上丢了，商户可以用同一个 key 重试（返回已保存的响应）或 GET 查询。
 - 商户也可以随时 `GET /v1/payments/{processorTransactionId}` 查询，作为兜底。
 
 ```text
-同一个数据库事务：
-   更新 operation 状态
+同一个数据库事务（异步路径，即之前已返回 PENDING）：
+   更新 operation 状态和 transaction（见第 5 步的结果落库表）
    插入 outbox 事件（stable event_id）
 提交
+
+（同步路径：只更新 operation 和 transaction，直接返回，不写 outbox）
 
 Webhook Worker：
    读取事件 → 签名 → POST 到商户 URL
@@ -612,7 +655,7 @@ Webhook Worker：
 
 > "If the bank answers in time, we return the final result in the response. If not, we return the processor transaction ID with a pending status, and a webhook follows once the outcome is final.
 >
-> To make sure the webhook isn't lost, we save the status change and an outbox event in the same transaction. A worker sends the signed webhook and retries with exponential backoff and jitter. Delivery is at least once, so each event has a stable ID and the merchant deduplicates by it. Events can arrive out of order, so merchants can also query the payment for its current status."
+> We only send a webhook when the merchant didn't get the final result in the response. To make sure it isn't lost, we save the status change and an outbox event in the same transaction. A worker sends the signed webhook and retries with exponential backoff and jitter. Delivery is at least once, so each event has a stable ID and the merchant deduplicates by it. Events can arrive out of order, so merchants can also query the payment for its current status."
 
 口诀：Save together. Send with signature. Retry with backoff. Merchant dedupes. Query as fallback.
 
@@ -730,11 +773,11 @@ sequenceDiagram
     participant WW as Webhook Worker
 
     M->>API: POST /v1/payments/authorizations (Idempotency-Key)
-    API->>DB: txn: claim key + operation PENDING
+    API->>DB: txn: insert operation PENDING (claims key) + update transaction
     API->>BK: authorize (bank idempotency key = operationId)
     alt answer within budget
         BK-->>API: approved / declined
-        API->>DB: txn: update status + webhook outbox
+        API->>DB: txn: update status (no outbox)
         API-->>M: 200 final status
     else timeout
         API->>DB: keep PENDING / UNKNOWN
@@ -743,7 +786,7 @@ sequenceDiagram
         BK-->>API: final result
         API->>DB: txn: update status + webhook outbox
     end
-    WW->>M: signed webhook (event ID, retries with backoff)
+    WW->>M: signed webhook, async path only (event ID, retries with backoff)
 ```
 
 ### 崩溃后丢结果
@@ -765,7 +808,7 @@ sequenceDiagram
 
 ## 8. 一分钟总结稿
 
-> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, using a unique constraint, then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. Final results and webhook events are saved together, and workers deliver them with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one did not process the request. We shard by processor transaction ID, and monitor success rate and pending age. Reconciliation with bank files is our final safety net."
+> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, using a unique constraint, then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. If the result comes later, the final status and the webhook event are saved together, and workers deliver it with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one did not process the request. We shard by processor transaction ID, and monitor success rate and pending age. Reconciliation with bank files is our final safety net."
 
 ---
 
@@ -802,7 +845,7 @@ sequenceDiagram
 | --- | --- |
 | Two concurrent refunds? | 短事务里锁 transaction 行，检查 captured − refunded − pending，增加 pending，再调银行；预留直到结果明确才释放 |
 | Two concurrent captures? | 条件更新 AUTHORIZED → CAPTURING，只有一个成功 |
-| How do you keep an audit trail? | 追加式状态历史，更正用新的调整记录，不改旧记录 |
+| How do you keep an audit trail? | operation 是每次操作的记录，不改旧记录；更正用新的调整记录；对账时可用 operation 重算 transaction 的计数器 |
 | Partial refunds? | transaction 与 operation 分开，每个 refund 有自己的金额和状态；capture 只支持一次全额 |
 
 ### 规模与运维
