@@ -76,9 +76,30 @@ Worker:    run job, heartbeat renews lease
 | Dependencies between jobs (DAG)? | Add a dependency table; trigger next when all upstream are SUCCESS. |
 | Priority? | Priority column + separate queues; avoid starvation with aging. |
 
-## Link to my experience (TasCreed)
-- I worked with the same ideas there: at-least-once, `jobName + trigger` dedupe, lease / heartbeat failover.
-- My part: exponential backoff for retries, kill API, and the portal. (I was not the original designer: say it honestly.)
+## My experience: TasCreed (use as a real-world example)
+TasCreed is an internal distributed task framework at eBay. We used it to run daily financial reports. I was a heavy user, not the original designer: say this honestly.
+
+How it maps to this design:
+| This design | TasCreed |
+|---|---|
+| Trigger row, unique key | `jobName + trigger`, duplicates rejected |
+| Claim by DB / atomic update | Worker takes a claim (adoption) in etcd, no leader |
+| Lease + heartbeat | etcd lease with TTL, heartbeat every TTL/3 |
+| Failover | Node dies -> lease expires -> another node re-runs |
+| Shards | A job is a DAG of steps; a step splits into parallel tasks |
+| At-least-once | Yes, so our tasks had to be idempotent |
+
+What I added (STAR in 3 lines):
+- Problem: some tasks retried forever and I could not stop them in time.
+- Action: added exponential backoff to the base framework, plus an API to kill a retrying thread. Later the team built a portal (with permissions) to monitor and kill them centrally.
+- Lesson: at-least-once + retry can loop forever. Backoff limits the damage; a kill switch gives humans the last word.
+
+Say in the interview:
+> "In my previous team we used a framework like this for daily financial reports. It had no leader: workers claimed tasks with etcd leases. I improved retries with exponential backoff and a kill API. That's why I design for bounded retries and an operator override."
+
+Trade-off to mention: no leader = simple and scalable, but no smart assignment by capacity. A hung task can keep heartbeating, so add task timeouts.
+
+Full details: `tascreed-story.md` (branch `add-tascreed-diagrams`).
 
 ## Remember
 - Trigger row + unique key + atomic claim.
