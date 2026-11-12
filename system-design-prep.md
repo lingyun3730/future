@@ -397,12 +397,42 @@ idempotency_key
   merchant_id, operation_type, idempotency_key   （联合唯一）
   request_hash, operation_id, response
 
-webhook_outbox                  （仅 webhook 事件）
-  event_id, type, payload, status, created_at, sent_at
+webhook_outbox                  （仅异步结果的 webhook 事件）
+  event_id, merchant_id, processor_transaction_id, operation_id,
+  type, payload, status, attempts, next_attempt_at, created_at, sent_at
 
 state_transition_history        （审计：每次状态变化只追加）
   operation_id, from_status, to_status, reason, at
 ```
+
+### Tables in English
+
+Five tables. The first four are on the hot path; the last one is for audit.
+
+| Table | One row is... | Purpose |
+| --- | --- | --- |
+| `transaction` | One `processorTransactionId`, created at authorization | The **current state** of a payment. Holds the status and the amount counters (`authorized_amount`, `captured_amount`, `refunded_amount`, `refund_pending_amount`) and the bank references from auth and capture. It is mutable, and it is the lock point: concurrent captures use a conditional status update, and concurrent refunds lock this row to check and reserve the refundable balance. |
+| `operation` | One authorize, capture or refund call | The **immutable record of what we were asked to do**, with its type, amount, status (PENDING / UNKNOWN / SUCCESS / FAILED), bank idempotency key and bank reference. A PENDING row is the task itself: if we crash, the recovery worker scans old PENDING rows, asks the bank for the real status, and continues. Foreign key: `processor_transaction_id` → `transaction`. |
+| `idempotency_key` | One merchant request key | Stops a merchant from submitting the same request twice. The unique constraint on `(merchant_id, operation_type, idempotency_key)` lets only one request claim the key. Stores a `request_hash` to detect the same key with a different body, and the saved response to replay. Foreign key: `operation_id` → `operation`. Written in the same transaction as the PENDING operation. |
+| `webhook_outbox` | One webhook event for a merchant | Used only when the merchant did not get the final result in the response (we returned pending, and the result came later). Written in the same transaction as the final status, so a result is never saved without its notification. A worker delivers it with a signature and retries with backoff; `status`, `attempts` and `next_attempt_at` track delivery. Foreign keys: `operation_id`, `processor_transaction_id`. |
+| `state_transition_history` | One status change | Append-only audit trail: from status, to status, reason, time. Never updated. Foreign key: `operation_id` → `operation`. |
+
+How they work together:
+
+```text
+Request      → idempotency_key (claim) + operation (PENDING)       one transaction
+               (refund also updates transaction.refund_pending_amount)
+Call bank
+Result       → operation (SUCCESS / FAILED) + transaction counters/status
+               + state_transition_history
+               + webhook_outbox, only if the merchant already got a pending response
+                                                                   one transaction
+```
+
+Notes:
+
+- Foreign keys are logical (enforced by code, no database constraint), and only hold inside one shard.
+- **Shard routing:** capture and refund route by the shard encoded in `processorTransactionId`. Authorization has no ID yet, so route by `hash(merchant_id, idempotency_key)` and generate the ID on that shard, with the shard number inside it. Then a retry of the same auth key always reaches the same shard, so the unique constraint works.
 
 要点：
 
@@ -583,14 +613,16 @@ COMMIT
 ### 第 6 步：通知商户
 
 - 同步响应：在预算内拿到结果就直接返回最终状态。
-- 异步 webhook：超时、PENDING，或之后状态变化。
+- 异步 webhook：只在商户没拿到最终结果时发（已经返回 202 PENDING，之后结果才出来）。同步成功不写 outbox。响应在网络上丢了，商户可以用同一个 key 重试（返回已保存的响应）或 GET 查询。
 - 商户也可以随时 `GET /v1/payments/{processorTransactionId}` 查询，作为兜底。
 
 ```text
-同一个数据库事务：
+同一个数据库事务（异步路径，即之前已返回 PENDING）：
    更新 operation 状态
    插入 outbox 事件（stable event_id）
 提交
+
+（同步路径：只更新 operation 状态，直接返回，不写 outbox）
 
 Webhook Worker：
    读取事件 → 签名 → POST 到商户 URL
@@ -612,7 +644,7 @@ Webhook Worker：
 
 > "If the bank answers in time, we return the final result in the response. If not, we return the processor transaction ID with a pending status, and a webhook follows once the outcome is final.
 >
-> To make sure the webhook isn't lost, we save the status change and an outbox event in the same transaction. A worker sends the signed webhook and retries with exponential backoff and jitter. Delivery is at least once, so each event has a stable ID and the merchant deduplicates by it. Events can arrive out of order, so merchants can also query the payment for its current status."
+> We only send a webhook when the merchant didn't get the final result in the response. To make sure it isn't lost, we save the status change and an outbox event in the same transaction. A worker sends the signed webhook and retries with exponential backoff and jitter. Delivery is at least once, so each event has a stable ID and the merchant deduplicates by it. Events can arrive out of order, so merchants can also query the payment for its current status."
 
 口诀：Save together. Send with signature. Retry with backoff. Merchant dedupes. Query as fallback.
 
@@ -734,7 +766,7 @@ sequenceDiagram
     API->>BK: authorize (bank idempotency key = operationId)
     alt answer within budget
         BK-->>API: approved / declined
-        API->>DB: txn: update status + webhook outbox
+        API->>DB: txn: update status (no outbox)
         API-->>M: 200 final status
     else timeout
         API->>DB: keep PENDING / UNKNOWN
@@ -743,7 +775,7 @@ sequenceDiagram
         BK-->>API: final result
         API->>DB: txn: update status + webhook outbox
     end
-    WW->>M: signed webhook (event ID, retries with backoff)
+    WW->>M: signed webhook, async path only (event ID, retries with backoff)
 ```
 
 ### 崩溃后丢结果
