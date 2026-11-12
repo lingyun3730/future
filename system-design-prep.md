@@ -710,6 +710,12 @@ Webhook Worker：
 - token bucket，按商户。
 - 独立队列或配额，避免大商户突发占满容量。
 - 所有查询和缓存 key 都带 tenant。
+- 限流按合同设置速率和突发额度；上游限流也保护了数据库，一个商户写不了无限多。
+- 连接池和 worker 容量按商户分配份额，防止突发饿死恢复 worker 和 webhook worker。
+
+**流量不均和数据不均是两个问题：** 流量靠网关限流，数据分布靠分片键。**不要把同一个商户的交易放进同一个分片。**
+
+> "At the gateway, each merchant has its own rate limit based on the contract. For the database, I would not shard by merchant, because big merchants would create hot shards. We shard by transaction ID, so even one large merchant spreads across all shards, and each payment with its operations stays on one shard, which keeps the refund balance check a local transaction. The trade-off is that merchant-level queries are cross-shard, so we serve those from a read store or secondary index fed by change data capture. If a merchant needs isolation or data residency, we can give it a dedicated shard group through a small directory."
 
 ### 6.4 数据库扩展
 
@@ -718,7 +724,18 @@ Webhook Worker：
 | 方案 | 优点 | 缺点 |
 | --- | --- | --- |
 | 按 processorTransactionId 分片 | 负载均匀，余额检查本地事务 | 按商户查询需要二级索引或单独读库 |
-| 按 merchant ID 分片 | 商户查询方便 | 大商户导致热点分片 |
+| 按 merchant ID 分片 | 商户查询方便 | 大商户（如占 30% 流量）落在一个分片，成为热点，可能放不下，还要重新分片 |
+
+**为什么不按商户分片：** 我们的工作单位是一笔付款，一笔付款不需要另一笔付款的数据，所以可以按付款打散。大商户的交易会均匀分布到所有分片。
+
+**auth 没有 ID：** 按 `hash(merchant_id, idempotency_key)` 路由，同样能打散大商户的流量，并保证同一个 key 重试落在同一个分片。
+
+**代价和处理：** 按商户的查询（列表、报表、对账）会跨分片。用**二级索引或读库**（搜索索引、读副本、数据仓库），通过 CDC 从主库同步，按商户建键；`GET /payments/{id}` 不受影响，因为分片号在 ID 里。
+
+**什么时候考虑按商户放置：**
+
+- 数据驻留或合规：某些商户的数据必须留在特定区域。
+- 超大商户（noisy whale）：用一个小的目录（merchant → shard group）给它**专用分片组**，其他商户仍按哈希分片。这是优化，不是默认。
 
 - 读副本用于读取和报表。
 - 旧数据归档但仍可查。
