@@ -453,7 +453,7 @@ stateDiagram-v2
 
 说明：PENDING = 已落库，还没有拿到银行答复（包括还没调、正在调）；UNKNOWN = 已发出请求但结果不明。恢复 worker 两种都扫描。
 
-规则：只有明确结果才能进入终态；SUCCESS 和 FAILED 不能再改变；更新用条件 UPDATE（`WHERE status = 'PENDING'`）或乐观锁。
+规则：只有明确结果才能进入终态；SUCCESS 和 FAILED 不能再改变；更新用条件 UPDATE（`WHERE status IN ('PENDING', 'UNKNOWN')`）或乐观锁。
 
 ---
 
@@ -495,12 +495,12 @@ stateDiagram-v2
 
 | 情况 | 处理 |
 | --- | --- |
-| 新 key | 插入成功，继续处理 |
+| 新 key | 第 3 步插入 operation 成功（唯一约束占位），继续处理 |
 | 同 key、同内容、已完成 | 返回保存的结果 |
 | 同 key、同内容、处理中 | 返回已有 operation ID 和当前状态，不再调用银行 |
 | 同 key、不同内容 | 拒绝，返回 422 |
 
-**并发重复：** 两个请求同时 insert，唯一约束保证只有一个成功，另一个读取已有记录。不要“先查再插”，会有竞态。
+**并发重复：** 第 2 步和第 3 步在实现上是**同一次 insert**：直接插入 operation，成功就是占位成功；唯一约束冲突就是重复，读取已有记录，按上表处理。不要“先查再插”，会有竞态。
 
 **最关键的一点：数据库唯一键只保护我们自己的系统，保护不了银行那一侧。**
 
@@ -595,11 +595,21 @@ COMMIT
 2. 等银行回调。
 3. 兜底：每日对账文件。
 
-恢复 worker 定期扫描超过 N 秒的 PENDING：查询银行 → 明确结果就更新并发 webhook → 仍未知则退避重试 → 超过上限转人工。
+恢复 worker 定期扫描超过 N 秒的 PENDING / UNKNOWN：查询银行 → 明确结果就更新并发 webhook → 仍未知则退避重试 → 超过上限转人工。
 
 **如果银行既无幂等键又无状态查询：**
 
 > "We don't resend the capture blindly. We keep the payment pending, tell the merchant it's in progress, and resolve it through the bank's reconciliation file or manual investigation."
+
+**结果落库（同一个事务，三种操作各不同）：**
+
+| 操作 | 银行成功 | 银行明确失败 | 结果未知 |
+| --- | --- | --- | --- |
+| authorization | operation SUCCESS，transaction → `AUTHORIZED`，保存银行授权引用 | operation FAILED，transaction → `DECLINED` | 保持 `AUTHORIZING` |
+| capture | operation SUCCESS，transaction → `CAPTURED`，`captured_amount` 写入，保存 capture 引用 | operation FAILED，transaction 回到 `AUTHORIZED` | 保持 `CAPTURING` |
+| refund | operation SUCCESS，`refund_pending_amount` 减、`refunded_amount` 加 | operation FAILED，`refund_pending_amount` 减回 | 保持预留 |
+
+同时把最终响应保存到 operation 的 `response`，之后同一个 key 重放就返回它。
 
 **对商户：** 拿到结果就同步返回；超时则返回 processorTransactionId 和 PENDING（HTTP 202）。**不要**返回“失败，请重试”，商户用新 key 重试会重复扣款。
 
@@ -619,11 +629,11 @@ COMMIT
 
 ```text
 同一个数据库事务（异步路径，即之前已返回 PENDING）：
-   更新 operation 状态
+   更新 operation 状态和 transaction（见第 5 步的结果落库表）
    插入 outbox 事件（stable event_id）
 提交
 
-（同步路径：只更新 operation 状态，直接返回，不写 outbox）
+（同步路径：只更新 operation 和 transaction，直接返回，不写 outbox）
 
 Webhook Worker：
    读取事件 → 签名 → POST 到商户 URL
@@ -798,7 +808,7 @@ sequenceDiagram
 
 ## 8. 一分钟总结稿
 
-> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, using a unique constraint, then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. Final results and webhook events are saved together, and workers deliver them with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one did not process the request. We shard by processor transaction ID, and monitor success rate and pending age. Reconciliation with bank files is our final safety net."
+> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, using a unique constraint, then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. If the result comes later, the final status and the webhook event are saved together, and workers deliver it with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one did not process the request. We shard by processor transaction ID, and monitor success rate and pending age. Reconciliation with bank files is our final safety net."
 
 ---
 
