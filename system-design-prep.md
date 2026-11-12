@@ -402,13 +402,15 @@ webhook_outbox                  （仅异步结果的 webhook 事件）
 
 ### Tables in English
 
-Three core tables. There is no separate idempotency table: each merchant key maps to exactly one operation, so the key lives on the operation row.
+Three core tables, plus an optional audit table. There is no separate idempotency table: each merchant key maps to exactly one operation, so the key lives on the operation row.
 
 | Table | One row is... | Purpose |
 | --- | --- | --- |
 | `transaction` | One `processorTransactionId`, created at authorization | The **current state** of a payment. Holds the status and the amount counters (`authorized_amount`, `captured_amount`, `refunded_amount`, `refund_pending_amount`) and the bank references from auth and capture. It is mutable, and it is the lock point: concurrent captures use a conditional status update, and concurrent refunds lock this row to check and reserve the refundable balance. |
 | `operation` | One authorize, capture or refund call | The **record of what we were asked to do**, with its type, amount, status (PENDING / UNKNOWN / SUCCESS / FAILED), bank idempotency key and bank reference. It also does idempotency: the unique constraint on `(merchant_id, type, idempotency_key)` lets only one request claim the key, `request_hash` detects the same key with a different body, and `response` is replayed on a duplicate. A PENDING row is the task itself: if we crash, the recovery worker scans old PENDING rows, asks the bank for the real status, and continues. Foreign key: `processor_transaction_id` → `transaction`. |
 | `webhook_outbox` | One webhook event for a merchant | Used only when the merchant did not get the final result in the response (we returned pending, and the result came later). Written in the same transaction as the final status, so a result is never saved without its notification. A worker delivers it with a signature and retries with backoff; `status`, `attempts` and `next_attempt_at` track delivery. Foreign keys: `operation_id`, `processor_transaction_id`. |
+
+Optional: `operation_status_history` is append-only (insert only): operation ID, from status, to status, reason, time. The operation's identity and amounts never change, but its `status` is updated in place with a conditional update, so only valid transitions are allowed. The history table keeps the full trail for audit and debugging without making the hot path more complex.
 
 How they work together:
 
@@ -434,7 +436,15 @@ Notes:
 - **transaction 状态**：`AUTHORIZING → AUTHORIZED → CAPTURING → CAPTURED`；auth 被拒为 `DECLINED`；过期为 `EXPIRED`（不用定时任务，capture 时检查 `now > auth_expires_at`，过期则返回 409）；退款只改金额计数，不改状态（全部退完可标 `REFUNDED`）。
 - **operation 状态和 API 状态的对应**：operation 内部是 PENDING / UNKNOWN / SUCCESS / FAILED；对外 SUCCESS 显示为 AUTHORIZED / CAPTURED / REFUNDED，FAILED 显示为 DECLINED / FAILED，PENDING 和 UNKNOWN 都显示为 PENDING。
 - **幂等放在 operation 上**：一个 key 对应一个 operation，唯一约束 `(merchant_id, type, idempotency_key)` 就是占位。key 只在约定的窗口内（如 24 小时）有效；operation 保留更久，所以超过窗口的 key 不再当作重复。被 400/422 拒绝的请求没有 operation，也就不保存 key。
-- **审计**：operation 是每次操作的不可变记录（金额、状态、银行引用）；transaction 只保存当前状态。
+- **operation 的状态是原地更新**：身份和金额字段不变（类型、金额、币种、幂等 key、请求指纹、银行幂等键），`status`、`bank_reference`、`response`、`updated_at` 会变，用条件更新保证只有合法转换。
+- **审计（可选的第四张表）**：每次状态变化再追加一条记录，只插入、不修改，这样热路径保持简单，又有完整历史。
+
+```text
+operation_status_history        （可选，仅追加）
+  operation_id, from_status, to_status, reason, at
+```
+
+  真正严格的追加式是账务（ledger，每笔资金变动一条分录），不在本题范围内。
 - **同一 processorTransactionId 的数据在同一个分片**：余额检查在一个本地事务里完成。
 
 ### 状态机
@@ -845,7 +855,7 @@ sequenceDiagram
 | --- | --- |
 | Two concurrent refunds? | 短事务里锁 transaction 行，检查 captured − refunded − pending，增加 pending，再调银行；预留直到结果明确才释放 |
 | Two concurrent captures? | 条件更新 AUTHORIZED → CAPTURING，只有一个成功 |
-| How do you keep an audit trail? | operation 是每次操作的记录，不改旧记录；更正用新的调整记录；对账时可用 operation 重算 transaction 的计数器 |
+| How do you keep an audit trail? | operation 状态原地更新，另有追加式的状态历史表（只插入）；更正用新的调整记录，不改旧记录；对账时用 operation 重算 transaction 的计数器 |
 | Partial refunds? | transaction 与 operation 分开，每个 refund 有自己的金额和状态；capture 只支持一次全额 |
 
 ### 规模与运维
