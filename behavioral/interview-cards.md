@@ -81,3 +81,20 @@ Notes:
 - Keep the layoff answer short and neutral. Move on to the positives quickly.
 - Do not compare or criticize other processors by name.
 - Be ready for: "What do you know about our product / tech?" Add 2 or 3 facts from the company website or blog before the interview.
+
+## Questions to ask the interviewer
+
+Ask what you really want to know. Pick 3 per round. Listen, then ask one follow-up. Do not ask about salary or things on the website.
+
+**Engineers / technical round**
+1. What does a typical project look like for this team, and what are the hardest technical challenges right now?
+2. How does the team handle reliability for payments, for example when a bank or scheme is unavailable?
+3. How do engineers decide between building something new and improving an existing system?
+
+**Manager / HR round**
+4. How do teams work across time zones, and how do you keep communication smooth?
+5. What would success look like in the first 6 months for this role?
+6. What do you like most about working here?
+
+**Use when it fits (my background)**
+7. I worked with Checkout.com as a merchant at eBay. How does the team use merchant feedback to shape the product?
