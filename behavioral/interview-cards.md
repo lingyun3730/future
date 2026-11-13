@@ -98,3 +98,25 @@ Ask what you really want to know. Pick 3 per round. Listen, then ask one follow-
 
 **Use when it fits (my background)**
 7. I worked with Checkout.com as a merchant at eBay. How does the team use merchant feedback to shape the product?
+
+## Fix it at the root: endless retries in a shared framework
+
+Use for: initiative, ownership, improving a shared tool, impact on other teams.
+
+| | |
+|---|---|
+| **Situation** | At eBay, we used an internal task framework (TasCreed) to run daily financial reports. While debugging, I noticed some tasks retried endlessly and I could not stop them in time. |
+| **Action** | I did not just work around it in our reports. I fixed it in the framework: added exponential backoff, and an API to kill a task that keeps retrying. |
+| **Result** | Runaway retries were limited and could be stopped quickly. As more teams used the framework, the team built a portal with permission control to see running jobs and kill stuck ones in one place. I have no numbers for this. |
+| **Lesson** | Fix problems at the root so everyone benefits. Backoff only limits the damage, so leave people a way to step in. |
+
+Keywords: `endless retry -> fix framework, not workaround -> backoff + kill API -> portal for all teams`
+
+90-second version:
+> At eBay, we used an internal task framework to run our daily financial reports. While debugging, I noticed that some tasks retried endlessly, and I had no way to stop them in time. I could have worked around it in our own reports, but the problem was in the framework, so I fixed it there. I added exponential backoff, so retries slow down instead of hammering the dependency. I also added an API to kill a task that keeps retrying, so people always have a manual override. As more teams started using the framework, the team built a portal with permission control, to see running jobs and kill stuck ones in one place. What I learned is to fix problems at the root when I can, and to always leave humans a way to step in.
+
+Notes:
+- Say "the team built a portal". My exact role in the portal is not confirmed, so do not claim it.
+- I was a heavy user, not the original designer of the framework (the open-source author is Lionel Liu). Say this if asked.
+- No impact numbers. If asked, say honestly that we did not track them.
+- Optional: add one concrete example of a task that retried endlessly, if I can recall one.
