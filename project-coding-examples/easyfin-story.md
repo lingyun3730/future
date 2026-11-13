@@ -258,3 +258,19 @@ Finance 审批和工程审批的对象与责任不同：前者审核需求变更
 - 一个真实用户反馈、校验案例或个人反思。
 
 练习顺序：先说为什么开发工具 → 按 UI、History、Recon、Validation、Integration 讲五个功能 → 结果。再练问题 2、4、5、6、9、13、14，按追问展开锁、校验和审批实现；不逐字背稿。
+
+## 8. Coding principles with examples（第一轮用）
+
+以下例子均来自已确认的设计，没有新增事实。
+
+| 原则 | 我的例子 |
+| --- | --- |
+| Fail early：尽早发现错误 | Finance 把 BFX 1.3 误写成 SFX 1.3；提交时按业务规则校验 journal type、account 等，错误在 review 之前就被拦住 |
+| 对照事实检查：不信输入 | Recon：只有标记的行允许改，其余行必须与 DB 一致，帮助发现误改或使用旧文件 |
+| 可追踪、可审计 | 当前表加 history 表，保留逐行变化，能看到谁改了什么 |
+| 简单优先，按规模取舍 | 不到 50 位 eligible users，不需要多人实时协作，所以用页面 checkout 单人编辑 |
+| 保留用户习惯，自动化交接但留人工审核 | 仍可导入 Excel；批准的数据自动生成 SQL，但工程师审批后才应用到 staging |
+
+> One principle I follow is to fail early. In EasyFin, a Finance user once wrote SFX 1.3 instead of BFX 1.3, a seller journal type instead of a buyer one, and it took several rounds to find. So I validate at submission, and the tool catches an invalid journal type before anyone reviews it. I also check that every row that wasn't marked as changed matches the database, which catches accidental edits or an old file.
+
+注意：规模取舍的依据是不到 50 位 eligible users；History 不等于任意版本回滚或不可篡改审计（见 4.3）。
