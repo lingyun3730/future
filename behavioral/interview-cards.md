@@ -40,3 +40,24 @@ Notes:
 - Say "my mistake" clearly. Do not blame others.
 - I don't remember why exactly the alert fired. Say so honestly if asked; focus on the fix and the lesson.
 - Still to add if I can recall: how I check callers today, and a later time this habit prevented a problem.
+
+## Cross-team dependency: slow owner of the payment graph
+
+Use for: working with other teams, influence without authority, taking ownership. If asked about a "disagreement", say it was a priority conflict, not a direct argument.
+
+| | |
+|---|---|
+| **Situation** | I led the in-house Buyer FX project. Part of the change was in the payment graph, owned by another team. The engineer there had other projects, so he was slow and our deadline was at risk. |
+| **Action 1** | I talked to him one-on-one and asked to raise the priority of our work. He agreed, but progress was still slow. |
+| **Action 2** | I saw the problem was his time, not his willingness. With my manager's approval, I handed my test preparation to a colleague and spent two days studying the code to work out the exact changes. He still made the change himself. |
+| **Result** | With a clear plan he finished much faster. The change and testing were done on time. He thanked me afterwards. |
+| **Lesson** | A request alone is often not enough. Lower the other team's cost: give specifics, so it is easy to say yes and finish. |
+
+Keywords: `payment graph dependency -> 1:1 priority talk -> still slow -> I free two days, study code -> exact plan -> he executes -> on time`
+
+90-second version:
+> I led the in-house Buyer FX project. Part of the change was in the payment graph, which another team owned. The engineer there had other projects, so his progress was slow, and our deadline was at risk. First, I talked to him one-on-one and asked him to raise the priority. He agreed, but nothing really changed. I realized the problem was not willingness, it was his time. So, with my manager's approval, I handed my test preparation to a colleague and spent two days studying the code, to work out exactly what to change. He still did the change himself, but now he had a clear plan, and it went much faster. We finished the change and the testing on time, and he thanked me afterwards. What I learned is that asking is often not enough. If I make it easier for the other team to help, they can.
+
+Notes:
+- The owner stayed responsible for the change. I only gave the plan.
+- I did not escalate. I first tried to remove the blocker myself.
