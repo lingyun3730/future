@@ -57,4 +57,4 @@ I'm excited to talk about how my experience fits this role.
 - "Checkout.com" 若指的不是支付处理商，请改回原来的 "Checkout"。
 - "internal tools" 可按面试岗位改成 EasyFin 等具体项目；没有把握的内容不要放进开场。
 - 不要说 "FX earns a lot of money for eBay" 这类没有数据支撑的话；用 42 个国家和地区这类确认过的事实。
-- 追问方向：Buyer FX、FXCenter 缓存、EasyFin，分别对应 `buyer-fx-story.md`、`fxcenter-story.md`、`easyfin-story.md`。
+- 追问方向：Buyer FX、FXCenter 缓存、EasyFin，分别对应 `../project-coding-examples/` 下的 `buyer-fx-story.md`、`fxcenter-story.md`、`easyfin-story.md`。

@@ -99,7 +99,7 @@ Say in the interview:
 
 Trade-off to mention: no leader = simple and scalable, but no smart assignment by capacity. A hung task can keep heartbeating, so add task timeouts.
 
-Full details: `tascreed-story.md` (branch `add-tascreed-diagrams`).
+Full details: `../project-coding-examples/tascreed-story.md`.
 
 ## Remember
 - Trigger row + unique key + atomic claim.

@@ -922,7 +922,7 @@ sequenceDiagram
 ### 注意
 
 - 不要说成自己设计了 TasCreed。你的角色：重度使用者，发现问题就主动改基础框架。
-- kill 的原理：删除 etcd 上的 adoption，下一次心跳时 Worker 找不到它，Task 被释放。注意这不等于取消 Job，Task 仍是 todo，可能被别的节点重新捡起。详见 `tascreed-story.md`。
+- kill 的原理：删除 etcd 上的 adoption，下一次心跳时 Worker 找不到它，Task 被释放。注意这不等于取消 Job，Task 仍是 todo，可能被别的节点重新捡起。详见 `../project-coding-examples/tascreed-story.md`。
 
 ---
 

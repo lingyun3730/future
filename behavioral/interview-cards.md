@@ -1,6 +1,6 @@
 # Interview Cards
 
-One short card per project. Use it for "coding principles with example" and behavioral questions. Full stories live in each `*-story.md`.
+One short card per project. Use it for "coding principles with example" and behavioral questions. Full stories live in `../project-coding-examples/`.
 
 ## EasyFin
 
@@ -19,4 +19,4 @@ Keywords: `BFX/SFX typo -> build EasyFin -> validate at submit -> 60 users`
 Questions it can answer:
 - Behavioral: take initiative / improve a process / work with non-technical users.
 - Principle: fail early, make changes auditable.
-- Details if asked: five features (UI, history, recon, validation, integration), see `easyfin-story.md`.
+- Details if asked: five features (UI, history, recon, validation, integration), see `../project-coding-examples/easyfin-story.md`.
