@@ -12,11 +12,13 @@
 | --- | --- |
 | 业务背景 | 原先 processor 提供 Buyer FX，并在汇率中收取 markup |
 | 目标变化 | Processor 按买家支付币种收单，eBay 直接与银行做 FX trades，以降低 FX 成本 |
-| 个人责任 | 理解端到端现状、厘清 case studies、识别系统和团队修改范围，协调开发、E2E 测试与上线 |
+| 个人责任 | 项目 tech lead：理解端到端现状、厘清 case studies、识别系统和团队修改范围，协调开发、E2E 测试与上线；亲自写代码（FX team 负责 FXCore 中计算 FX data points 的部分，有代码改动和测试） |
+| Processor 背景 | Adyen 是 eBay 最早合作的 card processor；CKO 是后来集成的 |
 | 难点一 | Processor 的币种与 settlement 支持不同；部分 merchant accounts 被 Buyer FX 和 domestic transactions 复用，迁移需要新账户等调整 |
 | 难点二 | 无法自行生成覆盖全部 currency pairs 的生产测试订单，也没有预算使用第三方机构 |
 | 关键方案 | Token-based traffic controller：高频 pair 事前预扣，低频 pair 允许多实例捕获后再扣减 |
-| 已确认结果 | 按流量将 currency pairs 分组，完成范围内所有币种对的 smoke testing，验证 processor 的 settlement 行为 |
+| 已确认结果 | 按流量将 currency pairs 分组，完成范围内所有币种对（33 种 payment currencies × 7 种 listing currencies）的 smoke testing，由本人用一周完成，验证 processor 的 settlement 行为 |
+| 失败恢复 | Token 额度不自动恢复；领取后交易失败的，人工检查后再补额度 |
 
 不要把 InHouse Buyer FX 与 Dynamic Pricing、Payment Currency Expansion 混成一个项目，也不要把后者的 42 个新增国家和地区作为本项目结果。
 
@@ -199,3 +201,15 @@
 - 一个跨团队协作事件和一条真实反思。
 
 练习顺序：30 秒概述 → 完整故事 → 优先回答问题 3、6、7、10、13。记住节点和取舍，不逐字背诵。
+
+## 6. Coding principles with examples（第一轮用）
+
+| 原则 | 我的例子 |
+| --- | --- |
+| 先理解全链路，再动手 | 先梳理端到端流程和 case studies，找出共享 merchant account、需要新账户等风险，再开发 |
+| 覆盖不了就受控地验证 | 无法造出全部币种对的测试单，用 Traffic Controller 让少量真实交易进入新路径；33 × 7 个币种对一周完成 smoke test |
+| 宁可少用，不要多用（安全失败） | Token 额度不自动恢复，人工核实后再补，避免失败后重复放量 |
+
+> One principle I follow is to control risk when I can't test everything. In Buyer FX, we couldn't create test orders for every currency pair, so we used a traffic controller to let a small amount of live traffic through the new path. If a transaction failed, the token was not restored automatically. A person checked it first, because we preferred under-testing to sending too much traffic.
+
+注意：Pessimistic 与 Optimistic 两种模式的严格保证边界见第 4 节，不要说成 exactly-once。

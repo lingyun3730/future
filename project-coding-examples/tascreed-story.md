@@ -11,7 +11,7 @@
 - 代价：至少一次执行，任务必须幂等。
 - 我的角色：财务报表场景的重度使用者；调试时发现框架问题就主动修复（不要说成设计了框架，开源仓库唯一作者是 Lionel Liu）。
 - 我的改进 1：调试时发现有线程无限 retry 又停不下来 → 在基础框架加 retry 策略（exponential backoff），并开放 API 可以 kill 掉一直 retry 的线程。
-- 我的改进 2：用的人变多后，团队做了 UI portal，集中监控和管理正在运行的线程，发现无效 retry 的线程就在 portal 上 kill；UI 有权限控制。（我在 UI 里的具体角色：待补）
+- 我的改进 2：用的人变多后，团队做了 UI portal（etcd 的可视化界面：当前有哪些 job 在跑、有哪些 task adoptions），集中监控和管理正在运行的线程，发现无效 retry 的线程就在 portal 上 kill；UI 有权限控制。（我在 UI 里的具体角色：待补）
 
 ## 口述提示卡
 
@@ -35,11 +35,11 @@ At eBay, my team used an internal distributed task framework called TasCreed to 
 
 **How failover works.** When a worker picks a task, it takes a lease in etcd and sends heartbeats to keep it alive. If the node crashes, the heartbeats stop, the lease expires, and etcd removes the claim automatically. Another node sees the task is free and runs it again. So there is no manual cleanup.
 
-**The trade-off.** The framework guarantees at-least-once execution, not exactly-once. So our tasks must be idempotent. [待补: how we made them idempotent.]
+**The trade-off.** The framework guarantees at-least-once execution, not exactly-once. So our tasks must be idempotent. Idempotency depends on the task. For example, each shard of a report writes a file with a fixed name, so a re-run overwrites the old file and never creates a duplicate.
 
 **Failure handling.** A task result is either FAILED, an expected failure that can be retried, or ERROR, an unexpected exception. A step can be marked as allowed to fail, so it does not block later steps. Only successful jobs are archived. Failed ones stay visible, so we can retry them.
 
-**My part.** I was a heavy user of the framework, mainly for generating our financial reports. When I found something to improve while debugging, I fixed it in the framework myself. For example, I noticed some threads were retrying endlessly and I had no way to stop them in time. So I added retry strategies to the base framework, such as exponential backoff, and I exposed an API to kill threads that keep retrying. Later, more teams started using the framework, so we built a UI portal to monitor and manage the running threads in one place. If a thread is retrying with no hope of success, we can kill it from the portal. The portal has permission control, so only authorized people can do that. [待补: your exact role in the portal.]
+**My part.** I was a heavy user of the framework, mainly for generating our financial reports. When I found something to improve while debugging, I fixed it in the framework myself. For example, I noticed some threads were retrying endlessly and I had no way to stop them in time. So I added retry strategies to the base framework, such as exponential backoff, and I exposed an API to kill threads that keep retrying. Later, more teams started using the framework, so we built a UI portal to monitor and manage the running threads in one place. The portal shows the data in etcd, such as which jobs are running and which tasks are adopted. If a task is stuck, authorized people can kill its adoption from the portal. The portal has permission control, so only authorized people can do that. [待补: your exact role in the portal.]
 
 ### My improvement story (STAR)
 
@@ -110,7 +110,7 @@ The job watcher reads alive jobs and done tasks. When all dependencies of a step
 ### Reliability
 
 **Q: What does at-least-once mean for your tasks?**
-After a crash, a task can run again, maybe partially done before. So the task must give the same result when repeated. [待补: e.g. overwrite output for a given date, upsert by key.]
+After a crash, a task can run again, maybe partially done before. So the task must give the same result when repeated. It depends on the business case. For our report shards, the output file name is fixed per shard, so a re-run overwrites the old file instead of creating a new one.
 
 **Q: What if a worker hangs but keeps sending heartbeats?**
 Heartbeats come from a separate thread, so a stuck task could keep its lease. That is a real risk. Idempotency and task-level timeouts and monitoring are the safety net. [待补: what we did in practice.]
@@ -223,3 +223,14 @@ Possible answers (these are design observations, not facts about our system): re
 8. 监控和告警方式。
 9. 节点数、规模、etcd 集群情况。
 10. 这个框架是否就是简历中"Java multithreading framework with failover and etcd service registration"。
+
+## Coding principles with examples（第一轮用）
+
+| 原则 | 我的例子 |
+| --- | --- |
+| 为失败设计：有界重试 | 发现线程无限重试，给基础框架加了指数退避，重试越来越慢，避免打爆依赖 |
+| 永远留人工开关 | 退避只限制损害，所以加了 kill API；后来 portal 让有权限的同事 kill 卡住的 task adoption |
+| 在根上修，不绕开 | 调试时发现问题，直接改基础框架，所有团队受益，而不是在每个报表里各自处理 |
+| 重复执行要安全（幂等） | 框架是 at-least-once，每个 shard 的输出文件名固定，重跑覆盖旧文件，不产生重复 |
+
+> One principle I follow is designing for failure. In our task framework, some tasks retried endlessly. I added exponential backoff so retries slow down instead of hammering the dependency. But backoff only limits the damage, so I also added a kill API, so people always have a manual override. I fixed it in the framework itself, so every team benefited. And since the framework runs tasks at least once, each report shard writes to a fixed file name, so a re-run just overwrites the old file.
