@@ -11,12 +11,14 @@
 | 平台背景 | 新建统一汇率平台；此前不同 components 分别直接从银行获取 rates |
 | 数据来源 | JPMC、HSBC、Bloomberg 等 vendors |
 | 业务差异 | Checkout 在银行 rates 基础上加 markup；Search、View Item 使用当天 Bloomberg mid-market rates |
-| 规模变化 | 最初只有流量较小的 Checkout；Search、View Item 接入后，需要避免查询流量直接冲击 FXCenter server |
+| 规模变化 | 最初只有流量较小的 Checkout；Search、View Item 的流量约为 Checkout 的 10 倍，需要避免查询流量直接冲击 FXCenter server |
 | 个人责任 | 根据业务需求设计缓存，包括 client library cache、retention、completeness check、fallback、metrics 与 monitoring |
 | 核心约束 | Client 的 get-rate lookup 不访问 server；预加载、重建 cache 时通过 search API 访问 FXCenter |
 | 数据生命周期 | 每天 7 点准备、8 点预加载、10 点生效；有效期从一天 10 点到下一天 10 点 |
 | 客户端策略 | 缓存该 client 所需的全部 rates，并保留前一天数据；collection 不完整时整批 fallback |
 | 监控与恢复 | Completeness false 产生 metrics，Grafana 告警；人工修复后重启 client 实例，重新获取 rates |
+
+生产验证：completeness false 只在 staging 环境触发过，生产环境没有触发过。不要说成生产事故。
 
 结果边界：已明确设计与实际恢复方式，但没有提供 QPS、延迟、请求下降比例、故障次数等量化结果，不编造性能或零故障结论。
 
@@ -244,3 +246,17 @@ SLA 不是数据存在性的数学保证，也不是金融风险已经被证明�
 - 可公开的接入结果、性能证据或真实故障案例，以及本人编码范围。
 
 练习顺序：30 秒概述 → 完整故事 → 优先回答问题 3、4、9、10、11、13。先讲清查询边界和完整性保护，再按追问展开 vendor fallback；不逐字背稿。
+
+## 6. Coding principles with examples（第一轮用）
+
+这些原则是综合了实际实现、客户需求和维护难度三方面做出的设计考虑。
+
+| 原则 | 我的例子 |
+| --- | --- |
+| 保护下游：别让每次请求都打到服务端 | Search、View Item 流量约为 Checkout 的 10 倍，所以查询全部走本地缓存，只在预加载和重建时调用 FXCenter |
+| 失败时整体回退，不用半套数据 | 所需 rates 不完整时，整批使用前一天的 collection，避免新旧汇率混用 |
+| 不盲目重试，让问题可见 | 缺数据时不反复请求服务端，产生 metric 和 Grafana 告警，人工修复后重启 client |
+
+> One principle I follow is to protect the downstream service. In FXCenter, Search and View Item had about ten times the traffic of Checkout, so I designed the client so that rate lookups always use a local cache. If the cached data was incomplete, the client used the previous day's full set instead of retrying again and again, and we raised an alert so people could fix it quickly. We tested this failure path in staging, and it did not happen in production.
+
+注意：说明的是设计意图和 staging 验证，不要声称生产中发生过或避免过事故。
