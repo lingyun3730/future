@@ -61,3 +61,23 @@ Keywords: `payment graph dependency -> 1:1 priority talk -> still slow -> I free
 Notes:
 - The owner stayed responsible for the change. I only gave the plan.
 - I did not escalate. I first tried to remove the blocker myself.
+
+## Why am I leaving / Why Checkout.com
+
+**Why leaving** (one sentence, calm, no complaints):
+> "eBay closed its China team because of geopolitical reasons, so my whole team was dissolved. It was not about performance, and it gave me a chance to choose what I want to do next."
+
+**Why Checkout.com** (3 reasons, all real):
+1. **Complementary experience.** At eBay I worked on managed payments. Checkout.com is a real processor, so I would see the other side of payments.
+2. **I have worked with you.** I led the Buyer FX implementation where payments went through Checkout.com, as a complement to Adyen. I know the integration from the merchant side.
+3. **Strong impression.** Across several processors I worked with, Checkout.com support was always fast and effective at solving problems. I want to work in a team with that standard.
+
+Keywords: `layoff (China team) -> processor side -> led CKO Buyer FX -> fast, effective support`
+
+60-second version:
+> Unfortunately, eBay closed its China team for geopolitical reasons, so my whole team was dissolved. It was not about performance, and it let me think about what I want next. I'd like to join Checkout.com for three reasons. First, at eBay I worked on managed payments, and Checkout.com is a real processor, so my experience would be complementary. Second, I've worked with you before. I led the Buyer FX implementation that routes payments through Checkout.com, alongside Adyen. Third, I've worked with several processors, and Checkout.com's support was always fast and good at solving problems. That made a strong impression on me, and I'd like to work in a team like that.
+
+Notes:
+- Keep the layoff answer short and neutral. Move on to the positives quickly.
+- Do not compare or criticize other processors by name.
+- Be ready for: "What do you know about our product / tech?" Add 2 or 3 facts from the company website or blog before the interview.
