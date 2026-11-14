@@ -37,6 +37,43 @@
 
 五个功能只记：UI → History → Recon → Validation → Integration。
 
+### 1.2 背景知识：Accounting requirement 从哪来，怎么变成系统配置
+
+面试官可能不懂会计系统，开场用一两句话交代背景即可。以下是通用背景，具体到你们系统的表名、规则和流程的部分标为 [待补]，需用真实经验确认。
+
+**1. Accounting requirement 是什么？** 业务发生的每一件事（如收款、退款、手续费、换汇）都要变成会计分录（journal entry）。Accounting requirement 就是规则：这类业务事件用哪种 journal type，借（debit）哪个 account，贷（credit）哪个 account，金额怎么算，什么时候入账。
+
+**2. 需求从哪来？** 通常由 Finance / Accounting 团队负责定义，常见触发原因：
+- 新业务或新产品上线，需要新的记账规则。
+- 会计政策或监管要求变化。
+- 审计或月结对账发现分录不对，需要修正。
+- 新增或调整 account（科目），比如 chart of accounts 变更。
+
+[待补: 你们实际最常见的触发场景。]
+
+**3. 从需求到实现的传统路径：**
+
+```text
+业务/政策变化
+  -> Finance 决定新的记账规则
+  -> 写进 Excel（事件类型 -> journal type -> debit/credit account 等）
+  -> 工程师把规则实现为 accounting system 的配置数据（DB 里的映射表）
+  -> staging 验证
+  -> 上线后新业务事件按新规则生成分录
+```
+
+这里的关键是：规则大部分是**配置数据**而不是代码，所以 Finance 在 Excel 里写的内容，最终会变成数据库里的行。这也是 EasyFin 能用 Excel 导入、行级 history、与 DB 做 recon 的原因。[待补: 配置表的实际名称和字段。]
+
+**4. 为什么旧流程容易出问题？**
+- account 或 journal type 写错、不存在，工程师只能反复问。
+- Finance 拿旧版 Excel 改，不知道 DB 里已经变过。
+- 谁改了什么、为什么改，没有记录，审计时难追溯。
+- 分录一旦错了，影响对账和财务报表，修正成本高，所以要在提交前尽早发现错误。
+
+**5. 一句话开场（可选）：**
+
+> In our accounting system, the rules for how business events become journal entries are stored as configuration data. Finance owns those rules, and engineers used to turn Excel changes into database changes by hand. EasyFin made that handoff clear and checkable.
+
 卡住时用："Before EasyFin..." / "The tool had five main features." / "First..." / "Second..." / "Third..." / "Fourth..." / "Finally..." / "In the end..."。
 
 ## 2. 30-second Overview

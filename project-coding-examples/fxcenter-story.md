@@ -164,6 +164,11 @@ SLA 不是数据存在性的数学保证，也不是金融风险已经被证明�
 
 回答重点：实际采用 collection completeness check 和整批 fallback，避免业务在缺少所需 rate 时反复请求 server。
 
+核心原因（已确认）：为了 recon（对账）。发生 rate missing 时，只需要记录"某个时间段内因为 rate missing 整批 fallback 了"，通知 recon team 即可，不需要逐个记录和通知具体缺了哪些 currency pairs。如果只缺一两个 pair，逐个记录还可以；但如果缺了一半以上，逐个处理没有意义，不如整批 fallback，recon 的范围也更简单明确。
+
+参考英文回答：
+"The main reason is reconciliation. When rates are missing, we only need to record that during a certain time window we fell back for the whole collection, and tell the recon team. We don't need to track which individual currency pairs were missing. If only one or two pairs were missing, tracking them would be manageable. But if more than half are missing, it's simpler and clearer to fall back for all of them."
+
 待补：当时是否还考虑了跨币种或跨规则版本一致性。可以将其作为可能的讨论方向，但不能写成已确认决策依据。
 
 ### Reliability and Recovery
