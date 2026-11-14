@@ -99,7 +99,11 @@ At eBay, my team used an internal distributed task framework called TasCreed to 
 A leader has to track every worker's health to assign tasks, and that makes the design and implementation more complex. With no leader, every node has the same function and works on its own, so it's simple to deploy and scale. The cost is that we can't do smart assignment, such as by resource capacity.
 
 **Q: Why etcd?**
-It has native leases. A claim is a key bound to a lease, so if the worker dies, the claim expires on its own. With a normal database, we'd have to build the timeout and cleanup ourselves.
+Because there is no leader, many workers compete for the same task at the same time, and we need exactly one of them to win. That needs strongly consistent coordination: every node must see the same answer, and a write is visible to all readers right after it succeeds. etcd is built on Raft, so it gives us that. Its atomic "create this key only if it doesn't exist yet" operation lets exactly one worker win, with no duplicates.
+
+The second reason is failure handling. etcd has leases, which work like a timer. A worker grabs a task by writing a key, "I'm taking task X", and attaches a lease to it, for example 10 seconds. While the worker is alive, it keeps renewing the lease. If the worker crashes, it stops renewing, the lease expires, and etcd deletes the key. The task is then free again and another worker can take it. With a normal database, we would have to build this timeout and cleanup ourselves.
+
+In plain words: etcd makes sure only one worker takes each task, and if that worker dies, the task is released automatically.
 
 **Q: Why not Quartz, XXL-Job, Airflow, or a message queue?** [待补: real reason]
 Quartz on its own has no sharding or cross-node failover. Leader-based schedulers need leader and worker health management. Airflow means running a separate platform, while TasCreed is a library inside our application. A queue has no step dependencies, job state, archive, or retry management.
