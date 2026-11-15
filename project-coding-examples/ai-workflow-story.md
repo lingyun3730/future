@@ -33,29 +33,30 @@
 
 ## 2. 30-second Overview
 
-> In my team, many features were about handling reports and webhooks, and they were simple and repetitive. So I built skills and a local MCP server that cover the whole flow: reading the Jira ticket, writing code and tests, running integration tests in a feature environment, and opening a PR. I only review the result at the end. After a few features, it became stable and needed little rework.
+> When I work on Data Gateway tasks, a lot of them are about processing reports and webhooks. They are simple and repetitive, so I used skills and a local MCP server to automate the whole flow: from reading the Jira ticket to writing code and tests, running integration tests in a feature environment, and opening a PR. After a few rounds of improvements, it can handle most of these tasks without human intervention. I only review the result at the end.
 
 ## 3. Main Story: Simple Spoken English
 
-> In my team, many features were about processing reports and webhooks. These tasks were simple and very similar to each other, but each one still needed the same steps: read the Jira ticket, write the code, write unit tests, run integration tests in a feature environment, and open a PR.
+> When I work on Data Gateway tasks, many of them are about processing reports and webhooks. These tasks are simple and very similar to each other, but each one still needs the same steps: read the Jira ticket, write the code, write unit tests, run integration tests in a feature environment, and open a PR.
 >
-> So I automated this flow with skills and an MCP server.
+> So I automated this flow using skills and an MCP server.
 >
-> The skills define the rules. One skill covers the coding style and unit test requirements. Another covers integration tests. There's also a PR description template. All of them live in our ai-plugins repo.
+> The skills tell the AI how to do the work. One covers our coding style and unit test requirements. Another covers integration testing. We also have a PR description template, so every PR looks the same.
 >
 > The MCP server runs locally and connects to our feature environment. It can trigger a CI build, deploy the code to a feature pool, send test payloads, and collect the results.
 >
-> For example, when we need to consume a new report's events from a processor, I give the AI the incoming event spec. It matches it to the output event spec in the Jira ticket. Most existing processors use similar mapping rules, so the AI learns from them and follows the same pattern, unless there's a special requirement.
+> Here's an example. When we need to consume a new report's events from a processor, I give the AI the incoming event spec, and it maps it to the output event spec in the Jira ticket. Most existing processors use similar mapping rules, so the AI learns from them and follows the same pattern, unless there's a special requirement.
 >
-> It writes the code in our coding style, runs the tests, and puts the real integration test results in the PR description. I only review at the end.
+> It writes the code in our coding style, runs the tests, and puts the real integration test results in the PR description. I only review the result at the end.
 >
-> After a few features, the flow became stable, and I rarely had to redo anything.
+> After a few rounds of improvements, the skills and MCP can now handle most of these tasks without any human intervention.
 
 讲述提示：
 
 - I 用于本人设计 skill 和 MCP 的判断；"AI" 做执行，"I" 负责定规则和最终 review。
 - 重点讲**为什么适合**：任务专一、重复、规则固定，所以 skill 能写得很具体，几乎不出幻觉。
-- 不说"完全不需要人"，说"整个流程不需要人工参与，最后 review 结果"。
+- 开头说明是做 Data Gateway 的 task 时（不说 my team）；不提 skill 存放在哪个 repo，面试官不关心。
+- 结尾要说明：经过几轮改进，skills + MCP 已能在无人工干预下完成绝大部分此类 task；不说"100% 不需要人"，最后仍由人 review。
 - 不声称有未提供的量化数字；可口述时说"明显提效"，具体数字 [待补]。
 
 ## 4. 面试官可能追问
@@ -82,7 +83,7 @@ The skill requires our coding style and unit tests. Integration tests run in the
 [待补: 每个 feature 原来多久、现在多久；用这套流程完成了多少个 feature。没有数据就说"明显减少了重复劳动，返工很少"，不要编数字。]
 
 **Q: Can other teammates use it?**
-The skills are in the ai-plugins repo, so others can use and improve them. [待补: 是否有其他人在用、谁在维护。]
+The skills are shared, so others can use and improve them. [待补: 是否有其他人在用、谁在维护。]
 
 **Q: What would you improve next?**
 [待补: 你的真实想法。可能的方向：覆盖更多类型的重复任务；把失败的案例回写进 skill。]
