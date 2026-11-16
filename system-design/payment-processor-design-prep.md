@@ -131,7 +131,7 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 **Q7. Two refunds arrive at the same time. What happens?**
 关键词：lock the row, reserve, commit, then call bank
-> "Say £100 was captured and two £70 refunds come in. In a short transaction, we lock the transaction row and check what's left: captured, minus refunded, minus pending. The first one reserves £70, and the second one is rejected, because only £30 is left. We commit before calling the bank, and we keep the reservation while the result is unknown."
+> "We reserve the amount before calling the bank. If two refunds with different idempotency keys come in at the same time, we use a short transaction to lock the transaction row, and check that the refundable amount is enough for the request. Say the captured amount is £100, and both requests are for £70. The first one passes the check and reserves £70. The second one doesn't, because when it gets the row lock, only £30 is left. We commit before calling the bank, and we keep the reservation while the result is unknown."
 
 **Q8. Why not hold a database transaction while you call the bank?**
 关键词：long lock, can't roll back the bank
