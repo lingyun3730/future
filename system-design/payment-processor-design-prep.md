@@ -28,6 +28,7 @@
   - [Tables in English](#tables-in-english) ⭐⭐
   - [状态机](#状态机) ⭐⭐⭐
 - [5. 核心流程（6 步）](#5-核心流程6-步) ⭐⭐⭐
+  - [5.0 完整讲稿（约 6 分钟）](#50-完整讲稿约-6-分钟面试时按这个顺序讲) ⭐⭐⭐
   - [第 1 步：接收请求](#第-1-步接收请求) ⭐⭐
   - [第 2 步：幂等检查](#第-2-步幂等检查) ⭐⭐⭐
   - [第 3 步：先落库（operation = key + PENDING）](#第-3-步先落库operation--key--pending) ⭐⭐⭐
@@ -103,7 +104,7 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 ### 0.4 必背口语卡（Top 15）
 
-用法：先看问题和关键词，自己口述一遍，再对照答案。答案是口语写法，句子短，可以直接用。
+用法：先看问题和关键词，自己口述一遍，再对照答案。答案是口语写法，句子短，可以直接用。**每张卡只讲一个点，不重复别的卡；要讲完整故事，看 5.0 完整讲稿。**
 
 **Q1. Which matters more, availability or correctness?**
 关键词：correctness first, never charge twice, reject rather than risk
@@ -115,19 +116,19 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 **Q3. The bank times out. What does the merchant see?**
 关键词：unknown, pending, 202, never "failed"
-> "A timeout means we don't know. The bank may have processed it. So we don't say it failed. We return the transaction ID with a pending status, HTTP 202. The merchant can check with a GET or wait for a webhook. We find out the real result by asking the bank, or from a callback, or from reconciliation."
+> "A timeout means we don't know. The bank may have processed it. So we don't say it failed. We return the transaction ID with a pending status, HTTP 202, and the merchant checks with a GET or waits for a webhook."
 
-**Q4. How do you stop a retry from charging twice?**
-关键词：idempotency key, unique constraint, bank key, request hash
-> "Every request has an idempotency key. We save it with the merchant ID and the operation type under a unique constraint. If the same request comes again, we return the saved result. If the same key comes with a different body, we reject it with a 422. We also send the bank a stable idempotency key, so even our own retries can't charge twice."
+**Q4. The merchant sends the same request twice. What happens?**
+关键词：unique constraint, saved response, request hash, 422
+> "Every request has an idempotency key. We save it with the merchant ID and the operation type under a unique constraint. A repeat gets the saved response back, with no second charge. If the same key comes with a different body, we reject it with a 422."
 
 **Q5. What if your service crashes right after calling the bank?**
-关键词：pending row is the task, recovery worker, status query first
-> "That's why we save first. Before calling the bank, we write the operation as pending. If we crash, the pending row is still there. A recovery worker finds old pending rows, asks the bank what happened, and then finishes the job. And because the bank call has a stable key, a retry can't charge twice."
+关键词：pending row is the task, query the bank first, same bank key
+> "The pending row is still in the database, so nothing is forgotten. A recovery worker finds old pending rows, queries the bank first, and then finishes the job. If it has to retry, it uses the same bank key, so the bank can't charge twice."
 
 **Q6. The database unique key already stops duplicates. Why do you need more?**
 关键词：only protects us, not the bank
-> "The unique key only protects our own system. It can't protect the bank. Say the bank takes the money and we crash before saving the result. Our database says pending, but the money is gone. So we also need the bank idempotency key, the pending state, and a way to recover: status query, callback or reconciliation."
+> "Because it only protects our own system, not the bank. If we crash after the bank took the money, our database can't tell. That's why we also need the bank idempotency key, the pending state, and recovery."
 
 **Q7. Two refunds arrive at the same time. What happens?**
 关键词：lock the row, reserve, commit, then call bank
@@ -135,27 +136,27 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 **Q8. Why not hold a database transaction while you call the bank?**
 关键词：long lock, can't roll back the bank
-> "Two reasons. A long transaction holds a connection and locks while we wait for the bank. And the bank call can't be rolled back with the database anyway. So we use short transactions: save the intent first, call the bank, then save the result."
+> "Two reasons. A long transaction holds a connection and locks while we wait for the bank. And the bank call can't be rolled back with the database anyway. So we save the intent first, call the bank, then save the result."
 
 **Q9. How does the merchant get the result? What about webhooks?**
 关键词：sync first, webhook only if pending, outbox, at-least-once, dedupe
-> "If the bank answers in time, we just return the result. If not, we return pending, and send a webhook later. We save the status change and the webhook event in the same transaction, so we never lose a notification. A worker sends it with a signature, and retries with backoff. Delivery is at least once, so each event has an ID, and the merchant dedupes. The merchant can also call GET any time."
+> "If the bank answers in time, we just return the result. If not, we return pending, and send a webhook when it's final. The status change and the webhook event are saved in the same transaction, so we never lose a notification. A worker sends it signed, and retries with backoff. Delivery is at least once, so each event has an ID and the merchant dedupes."
 
 **Q10. Can you switch to another bank when one fails?**
 关键词：clearly down yes, unknown no
-> "If the bank is clearly down, yes. We route to another bank before we send. But if a request timed out, we don't know whether the first bank processed it. We don't send it to a second bank. We keep it pending and find out first. Otherwise the customer could be charged twice."
+> "If the bank is clearly down, yes. We route to another bank before we send. But if a request timed out, we don't know whether the first bank processed it, so we never send it to a second bank. Otherwise the customer could be charged twice."
 
 **Q11. One bank is very slow. What do you do?**
 关键词：bulkhead, short timeout, circuit breaker, pending
-> "Each bank has its own connection pool and a short timeout, so one slow bank can't use up everything. If it keeps failing, a circuit breaker stops sending for a while, and tests it again later. Payments that can't finish become pending, and we sort them out later. Other banks aren't affected."
+> "Each bank has its own connection pool and a short timeout, so one slow bank can't use up everything. If it keeps failing, a circuit breaker stops sending for a while, and tests it again later. Other banks aren't affected."
 
 **Q12. How do you scale the database? What about one huge merchant?**
 关键词：shard by transaction ID, not merchant, local transaction, read store
-> "We shard by transaction ID, not by merchant. If we sharded by merchant, a big merchant would make a hot shard. With transaction ID, even one huge merchant spreads across all shards, and each payment stays on one shard, so the refund check is a local transaction. The cost is that merchant-level queries cross shards, so we serve those from a read store. Traffic spikes are handled by per-merchant rate limits at the gateway."
+> "We shard by transaction ID, not by merchant, because a big merchant would make a hot shard. With transaction ID, even one huge merchant spreads across all shards, and each payment stays on one shard, so the refund check is a local transaction. The cost is that merchant-level queries cross shards, so we serve those from a read store."
 
 **Q13. How do you know the numbers are right?**
 关键词：daily reconciliation, settlement file, exceptions, never edit
-> "Reconciliation. Every day we compare the bank's settlement file with our records, payment by payment. If a payment is stuck in pending, the bank file tells us the truth. Mismatches become exceptions for people to check. We never edit old records. We add a correcting entry, so there's an audit trail."
+> "Reconciliation. Every day we compare the bank's settlement file with our records, payment by payment. Mismatches become exceptions for people to check. We never edit old records. We add a correcting entry, so there's an audit trail."
 
 **Q14. How do you protect card data?**
 关键词：vault, token, last four, encrypt, never log
@@ -163,7 +164,7 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 **Q15. What happens if a whole region goes down?**
 关键词：multi-AZ sync, cross-region async, RPO/RTO, pending + reconcile, restore drills
-> "Inside a region, we run across multiple availability zones with synchronous replication, so one failure doesn't lose a committed payment. We also replicate to another region, and we have a clear RPO and RTO. Payments that were in flight during the failover stay pending, and we check them with the bank and with reconciliation. And we test restores regularly, because a backup you've never restored isn't a backup."
+> "Inside a region, we run across multiple availability zones with synchronous replication, so one failure doesn't lose a committed payment. We also replicate to another region, with a clear RPO and RTO. In-flight payments stay pending until we check them with the bank. And we test restores regularly, because a backup you've never restored isn't a backup."
 
 ### 0.5 复述训练方法
 
@@ -682,6 +683,62 @@ stateDiagram-v2
 
 **重要度：⭐⭐⭐**
 
+### 5.0 完整讲稿（约 6 分钟，面试时按这个顺序讲）
+
+**重要度：⭐⭐⭐**
+
+用法：这是一条连贯的故事线，每个概念**只完整讲一次**，后面只用一句话指回去。下面各步骤的详细内容是被追问时的备用。方括号里是被追问时再展开的点，不用主动讲。
+
+**① 开场：先说原则和三个难点（30 秒）**
+
+> "For a payment system, correctness comes first. We must never charge a customer twice, and we must never lose a payment. If something breaks, I'd rather reject a request than risk a wrong charge. There are three things that can go wrong: **duplicate requests, unknown results, and concurrent updates**. I'll walk through one authorization and show how each one is handled."
+
+**② 请求进来 + 难点一：重复（60 秒）**
+
+> "The merchant sends the request with an idempotency key. At the gateway we authenticate the merchant and apply a per-merchant rate limit.
+>
+> The first problem is duplicates. Merchants retry, because of timeouts or double clicks. So the first thing we do is claim the key. We insert an operation row, with a unique constraint on merchant ID, operation type and idempotency key. We don't check first and then insert, because two requests could both pass the check. If two identical requests arrive together, one insert wins, and the other hits a duplicate-key error. It reads the existing row, and returns the saved response, or a 202 pending if the first one is still running. If the same key comes with a different body, which we detect with a request hash, we reject it with a 422."
+
+[追问：key 保留多久；用 DB 不用 Redis；auth 没有 ID 怎么路由分片]
+
+**③ 先落库，再调银行（45 秒）**
+
+> "That unique key only protects our own system. It can't protect the bank. So the next rule is: save first, call later. In one short transaction, we save the operation as pending and update the transaction. Then we commit, and only then call the bank. We never hold a database transaction while waiting for the bank, because a long transaction holds locks, and the bank call can't be rolled back anyway. And we send the bank a stable idempotency key, the operation ID, so even our own retries can't charge twice."
+
+**④ 难点二：未知结果（75 秒）**
+
+> "The second problem is not knowing what happened. If the bank answers in time, we save the final status, and return the result. If the bank times out, **we don't say it failed**, because the bank may have processed it. We keep it pending, and return 202 with the transaction ID. The merchant can call GET or wait for a webhook.
+>
+> We find out the truth in the background. A recovery worker scans old pending rows. It **queries the bank first**, and only if it must retry, it uses the same bank key. So a crash after the bank approved, or a timeout, can never lead to a double charge. The rule is: unknown is not failed, query before retry, same key every time."
+
+**⑤ 通知商户（40 秒）**
+
+> "When the result becomes final, we notify the merchant. We save the status change and a webhook event in the same transaction, using an outbox, so we never lose a notification. A worker sends it with a signature and retries with exponential backoff and jitter, for a limited window. Delivery is at least once, so each event has an ID and the merchant dedupes. Order isn't guaranteed, so the merchant can call GET for the latest status. If the sync response already gave a final result, we don't send a webhook."
+
+**⑥ 难点三：并发——以退款为例（45 秒）**
+
+> "The third problem is concurrency. Say £100 was captured, and two £70 refunds arrive with different keys. We reserve the amount before calling the bank. In a short transaction we lock the transaction row, check captured minus refunded minus pending, and reserve £70. The second request gets the lock after the first, sees only £30 left, and gets a 422. Capture is simpler: a conditional update from AUTHORIZED to CAPTURING, so only one wins. If the bank refuses a refund, we release the reservation. If the result is unknown, we keep it."
+
+**⑦ 规模与可靠性（90 秒，每项一两句）**
+
+> "For scale, we get 1,000 QPS on average and 5,000 at peak. That's about 86 million payments a day, around 30 terabytes a year, so we shard by transaction ID, not by merchant, to avoid hot shards for big merchants. Each payment and its operations stay on one shard, so the refund check is a local transaction. Authorization has no ID yet, so we route it by a hash of merchant ID and idempotency key, so a retry always lands on the same shard. Merchant-level queries go to a read store fed by change data capture.
+>
+> For banks, each one has its own connection pool, a short timeout, and a circuit breaker, so a slow bank can't use up everything. We only route to another bank when we know the first one didn't process the request, never when the result is unknown.
+>
+> To know we're correct in production, we watch success rate, latency, and how many payments are stuck in pending, by bank and by merchant. And every day we reconcile the bank's settlement file with our records. That's our final safety net for anything the recovery worker missed.
+>
+> We keep card data in a vault and only handle tokens, we encrypt everything, and we back up across availability zones and regions."
+
+[追问：PCI、DR 的 RPO/RTO、chargeback、账本，见 6.7–6.9]
+
+**⑧ 收尾（15 秒）**
+
+> "So, in short: claim the key, save first, call the bank with the same key, treat a timeout as unknown, recover by querying, notify with an outbox, and reconcile every day."
+
+**自检：** 全程不重复同一个概念；每段结尾都引出下一个风险（重复 → 银行保护不了 → 未知 → 通知 → 并发 → 规模）。
+
+---
+
 ```text
 1. 接收请求   认证商户，限流
 2. 幂等检查   数据库唯一键占位，校验请求指纹
@@ -716,8 +773,6 @@ stateDiagram-v2
 
 **为什么：** 商户会重试（网络超时、用户连点）。没有幂等，同一笔付款可能被扣两次。
 
-> "Every request carries an idempotency key. We claim the key in our database first. Only one request gets to process it."
-
 唯一键：`(merchant_id, operation_type, idempotency_key)`，并保存 `request_hash`。
 
 | 情况 | 处理 |
@@ -749,13 +804,11 @@ stateDiagram-v2
 
 webhook 重复是另一个问题：投递至少一次，用稳定的 event ID 让商户去重。
 
-> "The worker never retries blindly. It queries the bank first with the operation ID. If it has to retry, it uses the same bank idempotency key, so the bank returns the original result and doesn't charge again."
-
 记忆口诀：Claim → Compare → Call → Confirm（占位、比对、调用、确认）。
 
-> "Every request has an idempotency key from the merchant. We save it with the merchant ID, the operation type and a hash of the request. There's a unique constraint on the first three, so if two identical requests come in together, only one gets in. The other one hits a duplicate-key error, reads the existing record, and returns the saved response. If the first one is still running, it gets a 202 pending with the same transaction ID. If the same key comes with a different amount, we reject it with a 422, because the key identifies one specific request. That's a client error.
+> "The merchant's idempotency key is saved with the merchant ID, the operation type and a hash of the request, under a unique constraint. If two identical requests come in together, one insert wins. The other hits a duplicate-key error, reads the existing record, and returns the saved response, or a 202 pending if the first is still running. If the same key comes with a different amount, we reject it with a 422, because the key identifies one specific request.
 >
-> But the database only protects us. Say the bank takes the payment and we crash before saving the result. That's the gap. So we send the bank a stable idempotency key, we keep the operation as pending, and we recover by status query or reconciliation."
+> But the database only protects us, not the bank. If the bank approves and we crash before saving, the row stays pending. The recovery worker queries the bank first, and retries only with the same bank key, so it can't charge twice."
 
 ### 第 3 步：先落库（operation = key + PENDING）
 
@@ -798,7 +851,7 @@ COMMIT
 | 提交后，调银行前 | PENDING | 恢复 worker 扫到，先查银行状态，再用同一个银行幂等键调用 |
 | 调银行后，保存结果前 | PENDING | 恢复 worker 先查银行状态，或用银行幂等键重试，最后对账 |
 
-> "Before we call the bank, we save one operation row as pending, in the same transaction as the transaction update. That row has the merchant's idempotency key under a unique constraint, so the merchant can't submit the same request twice. The pending status is our promise to call the bank, so if we crash, we don't forget. A recovery worker scans old pending rows, asks the bank what really happened, and then carries on. And the bank call uses a stable idempotency key, so a retry can't charge twice."
+> "Before we call the bank, we save one operation row as pending, in the same transaction as the transaction update. The pending row is our promise to call the bank, so if we crash, we don't forget. We commit first, and only then call the bank, with the operation ID as the bank idempotency key."
 
 口诀：Save first, call later. Key + pending. Recover by status.
 
@@ -856,11 +909,11 @@ COMMIT
 
 **对商户：** 拿到结果就同步返回；超时则返回 processorTransactionId 和 PENDING（HTTP 202）。**不要**返回“失败，请重试”，商户用新 key 重试会重复扣款。
 
-> "When we call the bank, we always send the same idempotency key for the same operation. So a retry can't create a second charge or refund. Each bank has a short timeout, its own connection pool and a circuit breaker.
+> "We send the bank the same idempotency key for the same operation, with a short timeout, and each bank has its own connection pool and circuit breaker.
 >
 > There are three results: success, failure or unknown. A timeout is unknown, not a failure, because the bank may have already processed it. So we keep the operation pending, and return the transaction ID with a pending status. We never tell the merchant it failed.
 >
-> Then a recovery worker checks with the bank, by status query or callback. If the bank can't tell us, the daily reconciliation file gives the final answer."
+> A recovery worker then checks with the bank, by status query or callback. If the bank can't tell us, the daily reconciliation file gives the final answer."
 
 口诀：Same key, short timeout. Three outcomes. Timeout = unknown. Recover, don't resend.
 
@@ -907,9 +960,7 @@ Webhook Worker：
 
 保证：至少一次投递。不保证：恰好一次、全局顺序。所以商户用 event ID 去重，必要时回查最新状态。
 
-> "If the bank answers in time, we return the final result right away. If not, we return the transaction ID with a pending status, and send a webhook when the result is final.
->
-> We only send a webhook when the merchant didn't get the final result in the response. To make sure it's never lost, we save the status change and an outbox event in the same transaction. A worker sends the signed webhook and retries with exponential backoff and jitter. Delivery is at least once, so every event has a stable ID, and the merchant dedupes by it. Events can arrive out of order, so the merchant can also query the payment for its latest status."
+> "If the bank answers in time, we return the final result right away. If not, we return pending, and send a webhook when the result is final. We only send a webhook in that second case. To make sure it's never lost, we save the status change and an outbox event in the same transaction. A worker sends it signed and retries with exponential backoff and jitter. Delivery is at least once, so every event has a stable ID, and the merchant dedupes by it. Events can arrive out of order, so the merchant can also query the payment for its latest status."
 
 口诀：Save together. Send with signature. Retry with backoff. Merchant dedupes. Query as fallback.
 
