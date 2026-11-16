@@ -258,6 +258,10 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 **易错点：** 86.4M × 10 KB × 365 约等于 300 TB，不是 300 GB。先用 1 KB，说出假设再讲。
 
+**写入按“每次 API 调用”算，不是按“每笔付款”：** 一次调用约 3–5 次写（插入 operation PENDING、更新 transaction、更新 operation 结果、追加状态历史）。一笔付款有 auth、capture、可能还有 refund，所以总写入更多，这里的峰值是按 5,000 次调用/秒估的。
+
+**要大声说出来：** “At 1,000 QPS that's **86.4 million payments a day**, about 86 GB a day at 1 KB each, and about 30 TB a year.”
+
 **数据保留：** 不能随便删。要考虑监管、争议和 chargeback，保留到 chargeback 期限之后。热数据放关系型数据库，旧数据归档到更便宜的存储，但仍然可查。
 
 ---
@@ -343,6 +347,16 @@ Idempotency-Key: auth-order-100-1
 | `DECLINED` | 402 | 发卡行拒绝；响应体仍有 `processorTransactionId`、`errorCode`、`retryable` |
 | `PENDING` | 202 | 超时或未知；**仍然返回 `processorTransactionId`**，商户用 GET 查询并等 webhook |
 | 请求不合法 | 400 / 422 | 缺字段、金额非法、同一个 key 带了不同内容 |
+
+**Auth 请求如何路由分片（ID 还没生成时）**
+
+- 不能“先随机生成 ID，再按 ID 路由”：同一个 key 重试会生成新 ID，落到另一个分片，唯一约束 (merchant_id, type, idempotency_key) 只在单分片内生效，会重复处理。
+- 本质：**同一个 idempotency key 必须永远落到同一个分片、得到同一个 transaction ID。**
+- 做法：auth 按 `hash(merchant_id, idempotency_key)` 选分片，在该分片内生成 `processorTransactionId` 并把分片号编码进去（如 `ptx_<shard>_<random>`）。重试时唯一约束命中已有行，返回第一次生成的 ID。
+- capture / refund 已带 ID，解析分片号直接路由。
+- 备选：ID 由 key 推导（hash），但 ID 可预测；或全局 key→ID 映射表，多一次查询和一个新的单点。不推荐。
+
+> “I can generate the ID first, but a retry would generate a different ID and land on another shard, so the unique constraint wouldn't catch the duplicate. So I route authorization by the hash of merchant ID and idempotency key, then generate the transaction ID inside that shard and embed the shard in it. Capture and refund route by the ID.”
 
 DECLINED 示例：
 
@@ -485,7 +499,9 @@ Idempotency-Key: refund-order-100-1
 | --- | --- | --- |
 | `REFUNDED` | 200 | 银行确认退款 |
 | `PENDING` | 202 | 未知，保持预留，等恢复或 webhook |
-| `FAILED` | 402 | 银行明确拒绝，预留释放 |
+| `FAILED` | 402 | 银行明确拒绝，预留释放；`refunded` 和 `refundableAmount` 不变 |
+
+**两种“失败”要分清：** 我们自己的校验失败（如金额超过剩余可退）→ 调银行**之前**拒绝，422；银行拒绝 → 已调用银行，operation 存 FAILED，返回 402 和银行原因。失败的退款**不改变**金额：已退 £70、剩 £30 时再退 £70，被 422 拒绝，`refunded` 仍是 70，`refundableAmount` 仍是 30。`INSUFFICIENT_FUNDS` 不适合用在我们自己的校验上。
 
 **本地校验：**
 
@@ -646,6 +662,18 @@ stateDiagram-v2
 
 说明：PENDING = 已落库，还没有拿到银行答复（包括还没调、正在调）；UNKNOWN = 已发出请求但结果不明。恢复 worker 两种都扫描。
 
+**三层状态不要混（易错）：**
+
+| 层 | 值 | 谁看到 |
+| --- | --- | --- |
+| `operation.status` | PENDING / UNKNOWN / SUCCESS / FAILED | 内部 |
+| `transaction.status` | AUTHORIZING / AUTHORIZED / CAPTURING / CAPTURED / DECLINED / EXPIRED … | 内部（CAPTURING 等是“进行中”） |
+| API `status` | AUTHORIZED / CAPTURED / REFUNDED / DECLINED / FAILED / **PENDING** | 商户 |
+
+- 商户只会看到 `PENDING`，看不到 CAPTURING。
+- auth 进行中：transaction = AUTHORIZING，operation = PENDING。“CAPTURING” 是 capture 阶段的状态，auth 阶段不用。
+- 唯一约束在 `operation` 表；`transaction` 表只存状态和金额计数器。
+
 规则：只有明确结果才能进入终态；SUCCESS 和 FAILED 不能再改变；更新用条件 UPDATE（`WHERE status IN ('PENDING', 'UNKNOWN')`）或乐观锁。
 
 ---
@@ -695,11 +723,13 @@ stateDiagram-v2
 | 情况 | 处理 |
 | --- | --- |
 | 新 key | 第 3 步插入 operation 成功（唯一约束占位），继续处理 |
-| 同 key、同内容、已完成 | 返回保存的结果 |
-| 同 key、同内容、处理中 | 返回已有 operation ID 和当前状态，不再调用银行 |
-| 同 key、不同内容 | 拒绝，返回 422 |
+| 同 key、同内容、已完成 | 返回**第一次保存的响应**（同样的 HTTP 状态码和 body），不是“当前状态”。第一次是 DECLINED，重试也是 DECLINED |
+| 同 key、同内容、处理中 | 返回 202 PENDING，带同一个 `processorTransactionId` 和 operation ID，不再调用银行 |
+| 同 key、不同内容 | 拒绝，422 `IDEMPOTENCY_KEY_REUSED`。原因：key 标识的是一个具体请求，内容不同是客户端 bug；不处理，也不返回旧结果 |
 
-**并发重复：** 第 2 步和第 3 步在实现上是**同一次 insert**：直接插入 operation，成功就是占位成功；唯一约束冲突就是重复，读取已有记录，按上表处理。不要“先查再插”，会有竞态。
+**并发重复：** 第 2 步和第 3 步在实现上是**同一次 insert**：直接插入 operation，成功就是占位成功；唯一约束冲突（duplicate-key 错误）就是重复，捕获后读取已有记录，按上表处理。不要“先查再插”，两个请求可能同时通过检查。
+
+**同 key 不同内容怎么检测：** operation 行上存 `request_hash`；key 相同但 hash 不同就拒绝。
 
 **最关键的一点：数据库唯一键只保护我们自己的系统，保护不了银行那一侧。**
 
@@ -711,9 +741,19 @@ stateDiagram-v2
 
 所以还需要：银行幂等键、PENDING 状态、恢复机制（查询、回调、对账）。
 
+**怎么保证不重复扣款（被问到“崩溃后怎么保证不扣两次”时答这个，不是 webhook 去重）：**
+
+1. 恢复 worker **从不盲目重试**，先用 operation ID **查银行**。
+2. 必须重试时，用**同一个银行幂等键**（如 `op_001`），银行返回原结果，不会再扣一次。
+3. 口诀：**unknown is not failed; query before retry; same key on every retry.**
+
+webhook 重复是另一个问题：投递至少一次，用稳定的 event ID 让商户去重。
+
+> "The worker never retries blindly. It queries the bank first with the operation ID. If it has to retry, it uses the same bank idempotency key, so the bank returns the original result and doesn't charge again."
+
 记忆口诀：Claim → Compare → Call → Confirm（占位、比对、调用、确认）。
 
-> "Every request has an idempotency key from the merchant. We save it with the merchant ID, the operation type and a hash of the request. There's a unique constraint on the first three, so if two identical requests come in together, only one gets in. The other one just reads the existing record and returns its status. If the same key comes with a different amount, we reject it. That's a client error.
+> "Every request has an idempotency key from the merchant. We save it with the merchant ID, the operation type and a hash of the request. There's a unique constraint on the first three, so if two identical requests come in together, only one gets in. The other one hits a duplicate-key error, reads the existing record, and returns the saved response. If the first one is still running, it gets a 202 pending with the same transaction ID. If the same key comes with a different amount, we reject it with a 422, because the key identifies one specific request. That's a client error.
 >
 > But the database only protects us. Say the bank takes the payment and we crash before saving the result. That's the gap. So we send the bank a stable idempotency key, we keep the operation as pending, and we recover by status query or reconciliation."
 
@@ -847,6 +887,15 @@ Webhook Worker：
    超过重试期限 → 标记失败，告警；商户可查询或请求重放
 ```
 
+**细节（被追问“商户宕机 2 小时”时用）：**
+
+- 退避：指数增长 + 随机抖动（jitter），设上限（如 1 小时），重试窗口 24–72 小时。
+- 窗口过后：标记 failed / 进死信（dead-letter），告警；商户可在后台或用 `GET` API 重放。否则事件会丢。
+- 去重：稳定的 `eventId`；商户保存已处理的 ID，忽略重复。
+- 顺序：不保证全局顺序，事件可能迟到或乱序。payload 带版本号或时间戳；商户以 payload 状态为准，或调用 `GET /v1/payments/{ptx}` 回查。
+- 商户侧：验 HMAC 签名，快速返回 2xx，业务异步处理。
+- 保护自己：按商户分队列 + 熔断，一个挂掉的商户不拖慢其他商户。
+
 | 设计 | 解决什么问题 |
 | --- | --- |
 | 状态更新和事件同一个事务 | 不会出现“状态改了但通知丢了” |
@@ -902,9 +951,13 @@ Webhook Worker：
 
 > "Each bank gets its own limited resources, so one slow bank can't use up everything. If a bank keeps failing, we stop sending for a while and let it recover. Payments that can't finish become pending, and we sort them out later."
 
-- 每个银行独立连接池和短超时。
+- 每个银行独立连接池和短超时（2–3 秒）。
 - 熔断器：连续失败后暂停发送，半开探测恢复。
 - 不要“增加超时一直等”，也不要“立即无限重试”。
+- **为什么重要：** 银行响应 20 秒时线程堆积；5,000 QPS 下共享连接池几秒就耗尽，所有银行都受影响。
+- **没发出去 vs 已发出去：** 熔断打开时**从没发给银行**的请求，可以快速失败或改走别的银行；**已发出并超时**的是 unknown，返回 202 PENDING 后恢复，**不能改走别的银行**。
+- 路由：只把**新请求**转给能处理同一张卡的其他银行，不动进行中的。
+- 监控每个银行的 p99 延迟和错误率并告警。
 
 ### 6.3 商户限流与多租户
 
@@ -960,7 +1013,9 @@ Webhook Worker：
 | 业务 | 成功率、延迟分位数、PENDING 数量和年龄、webhook 失败（按银行、商户拆分） |
 | 银行 | 每个银行的错误率、熔断器状态 |
 | 系统 | webhook 积压和最老事件年龄、数据库健康 |
-| 追踪 | correlation ID、分布式 tracing |
+| 卡住的支付 | PENDING / UNKNOWN 超过 N 分钟的数量 |
+| 不变量 | 持续检查 `refunded ≤ captured ≤ authorized` |
+| 追踪 | correlation ID（operation ID 贯穿每行日志）、分布式 tracing |
 | 安全 | 日志中不记录卡数据 |
 
 原则：告警基于客户感受到的症状（成功率下降、pending 增长），而不仅是服务器指标。
@@ -972,7 +1027,10 @@ Webhook Worker：
 > "Reconciliation is our last safety net. Every day, we compare the bank's settlement file with our records, payment by payment. If a payment is stuck in pending, the bank file tells us the truth. If something doesn't match, we raise it as an exception for people to check. We never edit old records. We add a correcting entry, so there's always an audit trail. And the job itself must be idempotent and restartable, so a crash halfway doesn't break anything."
 
 - 用银行引用号和我们的 operation ID 匹配。
-- 比较状态、金额、币种。
+- 比较状态、金额、币种。对比三方：银行文件、我们的数据库、商户视图。
+- 三类差异：银行有、我们没有；我们有、银行没有；金额或状态不同（重复也算）。
+- 处理：明确的情况自动修复（如卡在 PENDING、银行显示已批准）；其余进人工复核并告警。
+- 定位：对账是**最后的安全网**，兜住恢复 worker 漏掉的。
 - 不一致（一边缺失、金额不同、重复）报为异常，人工调查。
 - 账务修正用新的调整记录，不改旧记录。
 - 批处理要幂等、可重启。
@@ -1138,7 +1196,9 @@ sequenceDiagram
 
 **重要度：⭐⭐⭐**
 
-> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, with a unique constraint, and then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. If the result comes later, we save the final status and the webhook event together, and workers deliver it with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one didn't process the request. We shard by transaction ID, and we watch the success rate and how old the pending payments are. And reconciliation with the bank files is our final safety net."
+> "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, with a unique constraint, and then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. If the result comes later, we save the final status and the webhook event together, and workers deliver it with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one didn't process the request. We shard by transaction ID, and we watch the success rate and how old the pending payments are. And reconciliation with the bank files is our final safety net.
+>
+> Around that, requests are authenticated and rate limited per merchant, card data stays in a vault so we only handle tokens, everything is encrypted, and we back up across availability zones and regions."
 
 ---
 
@@ -1157,7 +1217,10 @@ sequenceDiagram
 | What if the key is claimed but the service crashes before calling the bank? | 记录是 PENDING，恢复 worker 扫描后先查银行状态再继续，不丢也不重复 |
 | Who generates the key? | 商户生成。内部重试时用 operation ID 作为银行幂等键 |
 | Is idempotency exactly-once? | 不是。传输至少一次，效果只生效一次 |
-| Same key, different body? | 拒绝，返回 422，说明是客户端错误 |
+| Same key, different body? | 拒绝，返回 422，说明是客户端错误；靠 operation 上的 `request_hash` 检测 |
+| Same key, same body, retried after it finished? | 返回第一次保存的响应（同状态码和 body），不是当前状态 |
+| Crash after the bank approved, how do you avoid a double charge? | 恢复 worker 先查银行；必须重试时用同一个银行幂等键。不是靠 webhook 去重 |
+| How does an auth request (no ID yet) pick a shard? | 按 hash(merchant_id, idempotency_key) 路由，同一个 key 永远落同一分片；ID 在分片内生成并编码分片号 |
 
 ### 超时与一致性
 
@@ -1307,6 +1370,18 @@ sequenceDiagram
 | 7 | 估算 | 差了 1000 倍（8M/天，300 GB） | 86.4M/天；1 KB 时约 86 GB/天，约 30 TB/年 |
 | 8 | 数据保留 | 一开始说可以按客户需求删除 | 要考虑监管、争议、chargeback；归档但可查 |
 | 9 | 授权与扣款流程 | 请求里放了 processorTransactionId，没解释清楚 | 先 authorization 预留，再 capture 扣款；capture 引用成功的 authorization |
+
+### 第二次 mock 后需要提高的地方
+
+1. 重复请求返回**第一次保存的响应**（同状态码 + body），不是“当前状态”。
+2. 状态分层：transaction 是 AUTHORIZING/AUTHORIZED/CAPTURING…；operation 是 PENDING/UNKNOWN/SUCCESS/FAILED；商户只看到 PENDING。auth 阶段不是 CAPTURING。
+3. 防重复扣款：先查银行，再用同一个 bank idempotency key 重试；不是 webhook 去重。
+4. 错误类型：我们自己校验失败（如退款超额）→ 422；银行拒绝 → 402 + 原因。
+5. Auth 分片路由：同一个 idempotency key 必须永远落到同一个分片（见 4.2）。
+6. Webhook 深度：jitter、最大退避、重试窗口 24–72h、死信 + 重放、eventId 去重、不保证顺序、HMAC 签名。
+7. 对账：对比银行文件 / 我们的库 / 商户视图；三类差异；自动修复或人工复核。监控：卡住的 PENDING 数、outbox 积压、p99、不变量 `refunded ≤ captured ≤ authorized`。
+8. 漏讲的主题：认证与限流、安全/PCI、备份/DR，各补一句。
+9. 表达：数字说出口（86.4M/天）；先说原因；发音 worker / pending / outbox / same key / backoff / deduplicate / shard。
 
 ### 面试前要自己想清楚
 
