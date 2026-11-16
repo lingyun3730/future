@@ -344,6 +344,16 @@ Idempotency-Key: auth-order-100-1
 | `PENDING` | 202 | 超时或未知；**仍然返回 `processorTransactionId`**，商户用 GET 查询并等 webhook |
 | 请求不合法 | 400 / 422 | 缺字段、金额非法、同一个 key 带了不同内容 |
 
+**Auth 请求如何路由分片（ID 还没生成时）**
+
+- 不能“先随机生成 ID，再按 ID 路由”：同一个 key 重试会生成新 ID，落到另一个分片，唯一约束 (merchant_id, type, idempotency_key) 只在单分片内生效，会重复处理。
+- 本质：**同一个 idempotency key 必须永远落到同一个分片、得到同一个 transaction ID。**
+- 做法：auth 按 `hash(merchant_id, idempotency_key)` 选分片，在该分片内生成 `processorTransactionId` 并把分片号编码进去（如 `ptx_<shard>_<random>`）。重试时唯一约束命中已有行，返回第一次生成的 ID。
+- capture / refund 已带 ID，解析分片号直接路由。
+- 备选：ID 由 key 推导（hash），但 ID 可预测；或全局 key→ID 映射表，多一次查询和一个新的单点。不推荐。
+
+> “I can generate the ID first, but a retry would generate a different ID and land on another shard, so the unique constraint wouldn't catch the duplicate. So I route authorization by the hash of merchant ID and idempotency key, then generate the transaction ID inside that shard and embed the shard in it. Capture and refund route by the ID.”
+
 DECLINED 示例：
 
 ```json
@@ -1307,6 +1317,18 @@ sequenceDiagram
 | 7 | 估算 | 差了 1000 倍（8M/天，300 GB） | 86.4M/天；1 KB 时约 86 GB/天，约 30 TB/年 |
 | 8 | 数据保留 | 一开始说可以按客户需求删除 | 要考虑监管、争议、chargeback；归档但可查 |
 | 9 | 授权与扣款流程 | 请求里放了 processorTransactionId，没解释清楚 | 先 authorization 预留，再 capture 扣款；capture 引用成功的 authorization |
+
+### 第二次 mock 后需要提高的地方
+
+1. 重复请求返回**第一次保存的响应**（同状态码 + body），不是“当前状态”。
+2. 状态分层：transaction 是 AUTHORIZING/AUTHORIZED/CAPTURING…；operation 是 PENDING/UNKNOWN/SUCCESS/FAILED；商户只看到 PENDING。auth 阶段不是 CAPTURING。
+3. 防重复扣款：先查银行，再用同一个 bank idempotency key 重试；不是 webhook 去重。
+4. 错误类型：我们自己校验失败（如退款超额）→ 422；银行拒绝 → 402 + 原因。
+5. Auth 分片路由：同一个 idempotency key 必须永远落到同一个分片（见 4.2）。
+6. Webhook 深度：jitter、最大退避、重试窗口 24–72h、死信 + 重放、eventId 去重、不保证顺序、HMAC 签名。
+7. 对账：对比银行文件 / 我们的库 / 商户视图；三类差异；自动修复或人工复核。监控：卡住的 PENDING 数、outbox 积压、p99、不变量 `refunded ≤ captured ≤ authorized`。
+8. 漏讲的主题：认证与限流、安全/PCI、备份/DR，各补一句。
+9. 表达：数字说出口（86.4M/天）；先说原因；发音 worker / pending / outbox / same key / backoff / deduplicate / shard。
 
 ### 面试前要自己想清楚
 
