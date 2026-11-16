@@ -766,6 +766,88 @@ Webhook Worker：
 - 账务修正用新的调整记录，不改旧记录。
 - 批处理要幂等、可重启。
 
+### 6.7 安全与 PCI-DSS
+
+**PCI-DSS** 是卡组织制定的安全标准：凡是存储、处理、传输卡号的系统都要遵守并定期审计。思路是：**尽量不碰卡数据，范围越小越好。**
+
+> "We keep card data out of our system. A separate vault stores it and gives us a token. Everything else only sees tokens or the last four digits. Data is encrypted in transit and at rest, and we never log card numbers."
+
+| 方面 | 做法 |
+| --- | --- |
+| 卡数据范围 | 卡号进入独立 vault（PCI 范围小而严格），其他服务只用 token，不在 PCI 范围内 |
+| 绝不存储 | CVV 授权后不能存；完整卡号能不存就不存 |
+| 展示 | 响应、日志、界面只显示后四位 |
+| 传输加密 | 全程 TLS（对商户、对银行） |
+| 静态加密 | 数据库和备份加密；密钥放 KMS/HSM，定期轮换，权限分离 |
+| 访问控制 | 最小权限；谁访问了敏感数据有审计日志 |
+| 商户认证 | API key 或 OAuth，在 API gateway 完成；key 可轮换、可吊销；商户身份不从请求体取 |
+| Webhook | 用 HMAC 签名，带时间戳防重放；商户验签 |
+| 日志 | 脱敏，不记录卡号和 CVV；correlation ID 追踪 |
+| 防滥用 | 按商户限流、请求校验、异常行为告警 |
+
+面试追问：
+
+| 问题 | 答案要点 |
+| --- | --- |
+| Where is card data stored? | 只在 vault。我们的 transaction 表只存 token、后四位、卡品牌 |
+| What if the vault is down? | 新支付无法处理，返回可重试的错误（503）；不能绕过 vault 存卡号。已有 PENDING 的恢复不依赖卡号，因为银行请求里已有 token 或引用 |
+| How does a merchant verify a webhook? | 用共享密钥验 HMAC 签名，检查时间戳在窗口内，用 event_id 去重 |
+| How do you rotate keys? | 支持新旧两个 key 同时有效一段时间，再下线旧 key，避免中断 |
+
+### 6.8 备份与灾备（Disaster Recovery）
+
+> "For a payment system, correctness comes first. We run across multiple availability zones with synchronous replication, so a single failure doesn't lose any committed payment. For a region failure, we replicate to another region and fail over with a clear RPO and RTO. And we test restores regularly, because a backup we've never restored isn't a backup."
+
+| 概念 | 含义 |
+| --- | --- |
+| RPO（Recovery Point Objective） | 最多能丢多久的数据。支付接近 0：已提交的交易不能丢 |
+| RTO（Recovery Time Objective） | 恢复服务最多要多久 |
+
+| 层面 | 做法 |
+| --- | --- |
+| 单机或单可用区故障 | 多 AZ 部署；数据库主库同步复制到同城副本，自动切换 |
+| 整个 region 故障 | 跨 region 异步复制（有少量 RPO），或同步复制换更高延迟；用对账找回切换窗口内可能缺失的支付 |
+| 备份 | 定期全量加增量日志（point-in-time recovery）；备份加密、异地保存 |
+| 演练 | 定期恢复演练；故障切换演练 |
+| 切换时的正确性 | 切换窗口内状态不确定的支付保持 PENDING，用银行 settlement 文件和对账确认，不盲目重发 |
+| 应用层 | 无状态服务，可随时重建；幂等键让商户重试安全 |
+
+面试追问：
+
+| 问题 | 答案要点 |
+| --- | --- |
+| Sync or async replication across regions? | 同步：不丢数据但延迟高、region 间网络故障会影响写入；异步：快但故障切换可能丢最后几秒。支付优先正确，用同 region 多 AZ 同步，跨 region 异步加对账兜底 |
+| How do you know backups work? | 定期恢复到演练环境并校验；监控备份任务 |
+| What happens to in-flight payments at failover? | 状态不确定的保持 PENDING，查银行或用对账确认；商户用同一幂等键重试返回已保存的响应 |
+
+### 6.9 Chargeback、争议与账本
+
+**Chargeback（拒付）：** 持卡人向发卡行争议某笔交易，银行把钱先从商户扣回，商户可提交证据申诉。这是数据要保留到 chargeback 期限之后的原因。
+
+```text
+持卡人发起争议 -> 发卡行通知（经卡组织）-> 我们收到 chargeback 通知
+  -> 创建 dispute 记录，关联原 transaction
+  -> 通知商户，商户在期限内提交证据
+  -> 提交给银行 / 卡组织
+  -> 结果：商户胜诉（资金退回）或败诉（资金扣除）
+```
+
+| 要点 | 内容 |
+| --- | --- |
+| 数据模型 | 单独的 dispute 表，关联 transaction，有自己的状态机和截止时间 |
+| 对账影响 | settlement 文件里会出现 chargeback 的资金变动，对账要识别并生成对应调整 |
+| 与退款的区别 | 退款是商户发起；chargeback 是持卡人通过银行发起，不受商户控制 |
+| 保留证据 | 原始授权、capture、发货证明等要保留到争议期限之后 |
+
+**账本（Ledger）：** 本题范围内不展开，但追问时可以简述：
+
+> "Money movements are recorded in a double-entry ledger. Every movement is an entry with a debit and a credit that balance. Entries are append-only. We never edit them. We fix mistakes with a reversing entry."
+
+- 每笔资金变动（capture、refund、chargeback、手续费）一条分录，借贷平衡。
+- 追加式、不可修改，更正用冲销分录，可审计。
+- 余额由分录汇总得出，对账用它与银行文件比对。
+- 你的会计系统经验（journal type、debit/credit account）可以直接接到这里。
+
 ---
 
 ## 7. 架构图
@@ -982,3 +1064,86 @@ sequenceDiagram
 2. 你对支付领域（外汇、对账、财务报表）有哪些真实经验，如何接到本题。
 3. 本文只覆盖一道题。接下来建议练习：账本（double-entry）、webhook 系统、多币种 / FX、批量结算与任务调度、限流器、欺诈检测。
 4. 本文的口述稿都是 mock 里梳理出来的，面试时用自己的话讲，不要背。
+
+---
+
+## 13. 面试官可能追问的地方（按面试进程）
+
+### 13.1 开场阶段：看你有没有先问清楚
+
+| 面试官的意图 | 可能的问题或情况 | 你要做的 | 对应章节 |
+| --- | --- | --- | --- |
+| 是否盲目开始画图 | 给一个很模糊的题目："Design a payment gateway" | 先问范围、规模、币种、银行数量、延迟、哪些在范围外 | 2 |
+| 是否理解支付领域 | "What's the difference between authorization and capture?" | 授权预留额度，capture 才真正扣款；两步可以分开，如发货后才 capture | 4.1 |
+| 是否有数量级概念 | "How much data per year?" | 先说假设再算：约 30 TB/年，注意 GB 与 TB | 3 |
+| 优先级判断 | "Availability or correctness?" | 开场就说 correctness 优先 | 12 |
+
+### 13.2 核心流程：最容易被深挖的地方
+
+| 追问方向 | 典型问题 | 要点 | 对应章节 |
+| --- | --- | --- | --- |
+| **银行超时** | "The bank times out after you sent the payment. What happens?" | 结果未知，标 PENDING，不让商户当失败重试；查状态、回调、对账 | 5、9 |
+| **幂等** | "How do you stop a retry from charging twice?" | 幂等键 + 请求指纹 + 银行幂等键 + 崩溃恢复；唯一键只保护我们自己 | 5、9 |
+| **崩溃** | "What if the service crashes after calling the bank?" | 先落库 PENDING，恢复 worker 扫描并先查银行 | 5（第 3 步） |
+| **并发** | "Two refunds at the same time?" | 锁 transaction 行，检查 captured − refunded − pending | 5、9 |
+| **回调与同步响应竞争** | "A callback arrives before the sync response" | 都按 operation ID 更新，状态机限制合法转换 | 9 |
+| **银行没有幂等键或状态 API** | "What if the bank doesn't support them?" | 不重发 capture，保持 PENDING，用对账或人工调查 | 9 |
+| **webhook** | "How does the merchant get notified, what if their server is down?" | outbox、重试退避、签名、顺序不保证 | 5（第 6 步）、9 |
+
+### 13.3 深入阶段：规模、可靠性、运维
+
+| 追问方向 | 典型问题 | 要点 | 对应章节 |
+| --- | --- | --- | --- |
+| 分片 | "How do you shard? What about a big merchant?" | 按 transaction ID，不按商户；二级索引或读库处理商户查询 | 6.3、6.4 |
+| 慢银行 | "One bank is slow, what do you do?" | bulkhead、短超时、熔断器、转 pending | 6.2 |
+| 银行切换 | "Can you fail over to another bank?" | 明确宕机可切；结果未知不切 | 6.1 |
+| 限流 | "A merchant floods you" | 按商户 token bucket，429 加 Retry-After | 6.3 |
+| 监控 | "How do you know something is wrong?" | 成功率、PENDING 数量和年龄，按银行和商户拆分，对症状告警 | 6.5 |
+| 对账 | "How do you make sure the books are right?" | 每日比对 settlement 文件，异常人工处理，不改旧记录 | 6.6 |
+| 回滚 | "How do you roll back a faulty release?" | 功能开关、灰度、幂等和可恢复状态、用对账修正 | 9 |
+
+### 13.4 Checkout.com 面经里点名的主题
+
+| 主题 | 典型问题 | 要点 | 对应章节 |
+| --- | --- | --- | --- |
+| **外部服务的容错** | "Resilience when calling external services" | 超时、重试退避、熔断、bulkhead、PENDING | 6.2 |
+| **安全与加密** | "How is card data protected? Authentication, encryption?" | vault + token、后四位、TLS、静态加密、KMS、API key、HMAC | 6.7 |
+| **备份与灾备** | "What about backups and disaster recovery?" | RPO/RTO、多 AZ、跨 region、恢复演练、切换时 PENDING | 6.8 |
+| **分布式系统** | "Consistency in a distributed system?" | 单分片强一致事务，跨系统靠幂等、outbox、对账；不做分布式事务 | 5、9 |
+| **卡数据存哪里、只显示后四位** | "Where is card data stored?" | 只在 vault，其他只有 token 和后四位 | 6.7 |
+| **重试下状态正确** | "How does status stay correct across retries?" | 幂等键、状态机、条件更新、operation 为单位 | 4、5 |
+
+### 13.5 容易被问到但文档较薄的主题（补充要点）
+
+| 主题 | 问题 | 回答要点 |
+| --- | --- | --- |
+| **3DS / 强客户认证** | "How would 3DS change the flow?" | 授权可能返回"需要认证"，状态机多一个 PENDING_AUTHENTICATION；商户把客户重定向到发卡行验证，完成后继续授权；webhook 或回调通知结果；超时未完成要有过期处理 |
+| **风控与欺诈** | "Where does fraud screening fit?" | 在授权前评分（规则加模型），高风险拒绝或转人工、触发 3DS；本题范围外，但要说明位置和对状态机的影响，评分服务超时时的降级策略（放行或拒绝，由商户风险偏好决定） |
+| **授权过期与撤销（void）** | "What if the merchant never captures?" | 授权有有效期，过期后额度释放；商户可主动 void；状态 AUTHORIZED → VOIDED / EXPIRED，定时任务扫描过期授权，并与银行状态对齐 |
+| **多币种 / FX** | "How do you support multiple currencies?" | 金额用最小货币单位的整数加币种；记录汇率快照和时间；结算币种与支付币种分开；汇率缺失时的 fallback（你的 FXCenter 经验：整批 fallback 加通知 recon） |
+| **部分 capture / 多次 capture** | "Can you capture in parts?" | 本题简化为一次全额；扩展时 capture 也是 operation，累计不超过授权额，和退款类似用锁加检查 |
+| **多银行接入扩展** | "How do you add the 30th bank?" | Bank adapter 接口统一，每个银行实现自己的协议、错误映射、幂等和状态查询能力；路由规则放配置里 |
+| **API 设计细节** | "How do you paginate? Version the API?" | 列表用游标分页（按创建时间加 ID）；API 版本放在路径或 header，向后兼容、增加字段不破坏旧客户 |
+| **沙箱 / 测试环境** | "How do merchants test?" | 独立沙箱环境，模拟银行，约定的测试卡号触发不同结果（通过、拒绝、超时） |
+| **PII / 合规（GDPR）** | "What about deletion requests?" | 与保留要求冲突：监管和 chargeback 期限内必须保留；到期后删除或匿名化；卡数据在 vault，个人信息可单独处理 |
+| **时钟与时间** | "How do you handle time in distributed systems?" | 状态顺序靠版本号或数据库时间，不靠多机本地时钟；过期和超时用数据库时间 |
+| **队列和消息系统** | "Would you use Kafka?" | 银行调用 PENDING 记录即任务，不需要队列；webhook 和事件流可用 outbox 加队列；事件流用于下游（对账、分析、风控） |
+| **数据迁移 / schema 演进** | "How do you add a column to a sharded table?" | 向后兼容的变更，先加可空字段，部署新代码，再回填，最后加约束；双写迁移 |
+
+### 13.6 反向提问：面试官问"你有什么问题"
+
+可以问，体现你理解支付系统：
+
+- Checkout 现在如何处理银行结果未知的情况，是对账还是主动查询？
+- 不同 acquirer 的差异怎么抽象？
+- 你们怎么衡量授权成功率，哪些是最大的改进杠杆？
+- 灾备演练多久做一次，最近有没有发现什么问题？
+
+### 13.7 面试时的节奏提示
+
+1. 先 clarify（3–5 分钟），写下范围、规模、范围外。
+2. 说出 correctness 优先，作为后面所有取舍的依据。
+3. 画主流程，立刻标出"外部调用"这个风险点，主动讲超时、幂等、PENDING，不等面试官问。
+4. 对每个设计决定说出**取舍**（为什么不按商户分片，为什么不用分布式事务）。
+5. 被问到不会的，说出你的推理，并说明会和哪些人确认，不要硬编。
+6. 最后留 2 分钟总结，并说出还可以扩展的点（3DS、风控、多币种）。
