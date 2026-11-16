@@ -13,51 +13,51 @@
   - [0.3 一条主线：7 个词记住整个设计](#03-一条主线7-个词记住整个设计)
   - [0.4 必背口语卡（Top 15）](#04-必背口语卡top-15)
   - [0.5 复述训练方法](#05-复述训练方法)
-- [1. 开场框架](#1-开场框架)
-- [2. Clarify 问题清单](#2-clarify-问题清单)
-- [3. 估算](#3-估算)
-- [4. API 与数据模型](#4-api-与数据模型)
-  - [4.1 生命周期与 ID](#41-生命周期与-id)
-  - [4.2 Authorization](#42-authorization)
-  - [4.3 Capture](#43-capture)
-  - [4.4 Refund](#44-refund)
-  - [4.5 查询与通用](#45-查询与通用)
-  - [4.6 完整例子：£10.00 的订单](#46-完整例子1000-的订单)
-  - [4.7 面试时怎么讲 API](#47-面试时怎么讲-api)
-  - [数据模型](#数据模型)
-  - [Tables in English](#tables-in-english)
-  - [状态机](#状态机)
-- [5. 核心流程（6 步）](#5-核心流程6-步)
-  - [第 1 步：接收请求](#第-1-步接收请求)
-  - [第 2 步：幂等检查](#第-2-步幂等检查)
-  - [第 3 步：先落库（operation = key + PENDING）](#第-3-步先落库operation--key--pending)
-  - [第 4–5 步：调用银行和处理结果](#第-45-步调用银行和处理结果)
-  - [第 6 步：通知商户](#第-6-步通知商户)
-  - [退款：并发时防止多退](#退款并发时防止多退)
-- [6. Deep dive 主题](#6-deep-dive-主题)
-  - [6.1 银行路由与切换](#61-银行路由与切换)
-  - [6.2 慢银行隔离（Bulkhead + Circuit Breaker）](#62-慢银行隔离bulkhead--circuit-breaker)
-  - [6.3 商户限流与多租户](#63-商户限流与多租户)
-  - [6.4 数据库扩展](#64-数据库扩展)
-  - [6.5 监控与告警](#65-监控与告警)
-  - [6.6 对账（Reconciliation）](#66-对账reconciliation)
-  - [6.7 安全与 PCI-DSS](#67-安全与-pci-dss)
-  - [6.8 备份与灾备（Disaster Recovery）](#68-备份与灾备disaster-recovery)
-  - [6.9 Chargeback、争议与账本](#69-chargeback争议与账本)
-- [7. 架构图](#7-架构图)
-- [8. 一分钟总结稿](#8-一分钟总结稿)
-- [9. 追问与答案](#9-追问与答案)
-- [10. 你的经验怎么接](#10-你的经验怎么接)
-- [11. 常用英文表达](#11-常用英文表达)
-- [12. 易错点与待补](#12-易错点与待补)
-- [13. 面试官可能追问的地方（按面试进程）](#13-面试官可能追问的地方按面试进程)
-  - [13.1 开场阶段：看你有没有先问清楚](#131-开场阶段看你有没有先问清楚)
-  - [13.2 核心流程：最容易被深挖的地方](#132-核心流程最容易被深挖的地方)
-  - [13.3 深入阶段：规模、可靠性、运维](#133-深入阶段规模可靠性运维)
-  - [13.4 Checkout.com 面经里点名的主题](#134-checkoutcom-面经里点名的主题)
-  - [13.5 容易被问到但文档较薄的主题（补充要点）](#135-容易被问到但文档较薄的主题补充要点)
-  - [13.6 反向提问：面试官问"你有什么问题"](#136-反向提问面试官问你有什么问题)
-  - [13.7 面试时的节奏提示](#137-面试时的节奏提示)
+- [1. 开场框架](#1-开场框架) ⭐⭐
+- [2. Clarify 问题清单](#2-clarify-问题清单) ⭐⭐
+- [3. 估算](#3-估算) ⭐⭐
+- [4. API 与数据模型](#4-api-与数据模型) ⭐⭐
+  - [4.1 生命周期与 ID](#41-生命周期与-id) ⭐⭐
+  - [4.2 Authorization](#42-authorization) ⭐⭐
+  - [4.3 Capture](#43-capture) ⭐⭐
+  - [4.4 Refund](#44-refund) ⭐⭐
+  - [4.5 查询与通用](#45-查询与通用) ⭐
+  - [4.6 完整例子：£10.00 的订单](#46-完整例子1000-的订单) ⭐⭐
+  - [4.7 面试时怎么讲 API](#47-面试时怎么讲-api) ⭐⭐
+  - [数据模型](#数据模型) ⭐⭐
+  - [Tables in English](#tables-in-english) ⭐⭐
+  - [状态机](#状态机) ⭐⭐⭐
+- [5. 核心流程（6 步）](#5-核心流程6-步) ⭐⭐⭐
+  - [第 1 步：接收请求](#第-1-步接收请求) ⭐⭐
+  - [第 2 步：幂等检查](#第-2-步幂等检查) ⭐⭐⭐
+  - [第 3 步：先落库（operation = key + PENDING）](#第-3-步先落库operation--key--pending) ⭐⭐⭐
+  - [第 4–5 步：调用银行和处理结果](#第-45-步调用银行和处理结果) ⭐⭐⭐
+  - [第 6 步：通知商户](#第-6-步通知商户) ⭐⭐⭐
+  - [退款：并发时防止多退](#退款并发时防止多退) ⭐⭐⭐
+- [6. Deep dive 主题](#6-deep-dive-主题) ⭐⭐⭐
+  - [6.1 银行路由与切换](#61-银行路由与切换) ⭐⭐⭐
+  - [6.2 慢银行隔离（Bulkhead + Circuit Breaker）](#62-慢银行隔离bulkhead--circuit-breaker) ⭐⭐⭐
+  - [6.3 商户限流与多租户](#63-商户限流与多租户) ⭐⭐
+  - [6.4 数据库扩展](#64-数据库扩展) ⭐⭐
+  - [6.5 监控与告警](#65-监控与告警) ⭐⭐
+  - [6.6 对账（Reconciliation）](#66-对账reconciliation) ⭐⭐⭐
+  - [6.7 安全与 PCI-DSS](#67-安全与-pci-dss) ⭐⭐
+  - [6.8 备份与灾备（Disaster Recovery）](#68-备份与灾备disaster-recovery) ⭐⭐
+  - [6.9 Chargeback、争议与账本](#69-chargeback争议与账本) ⭐
+- [7. 架构图](#7-架构图) ⭐⭐
+- [8. 一分钟总结稿](#8-一分钟总结稿) ⭐⭐⭐
+- [9. 追问与答案](#9-追问与答案) ⭐⭐⭐
+- [10. 你的经验怎么接](#10-你的经验怎么接) ⭐⭐
+- [11. 常用英文表达](#11-常用英文表达) ⭐
+- [12. 易错点与待补](#12-易错点与待补) ⭐⭐
+- [13. 面试官可能追问的地方（按面试进程）](#13-面试官可能追问的地方按面试进程) ⭐⭐⭐
+  - [13.1 开场阶段：看你有没有先问清楚](#131-开场阶段看你有没有先问清楚) ⭐⭐
+  - [13.2 核心流程：最容易被深挖的地方](#132-核心流程最容易被深挖的地方) ⭐⭐⭐
+  - [13.3 深入阶段：规模、可靠性、运维](#133-深入阶段规模可靠性运维) ⭐⭐
+  - [13.4 Checkout.com 面经里点名的主题](#134-checkoutcom-面经里点名的主题) ⭐⭐
+  - [13.5 容易被问到但文档较薄的主题（补充要点）](#135-容易被问到但文档较薄的主题补充要点) ⭐
+  - [13.6 反向提问：面试官问"你有什么问题"](#136-反向提问面试官问你有什么问题) ⭐
+  - [13.7 面试时的节奏提示](#137-面试时的节奏提示) ⭐⭐
 
 ---
 
@@ -177,6 +177,8 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 ## 1. 开场框架
 
+**重要度：⭐⭐**
+
 每道题都按这 6 步走，约 45 分钟：
 
 | 步骤 | 时间 | 做什么 |
@@ -199,6 +201,8 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 ---
 
 ## 2. Clarify 问题清单
+
+**重要度：⭐⭐**
 
 ### 要问的问题
 
@@ -242,6 +246,8 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 ## 3. 估算
 
+**重要度：⭐⭐**
+
 | 项目 | 计算 | 结果 |
 | --- | --- | --- |
 | 每天笔数 | 1,000 × 60 × 60 × 24 | 约 86.4 million |
@@ -258,7 +264,11 @@ Claim → Save → Call → Unknown → Recover → Notify → Reconcile
 
 ## 4. API 与数据模型
 
+**重要度：⭐⭐**
+
 ### 4.1 生命周期与 ID
+
+**重要度：⭐⭐**
 
 一笔付款分三个操作，**用同一个 `processorTransactionId` 串起来**：
 
@@ -284,6 +294,8 @@ Authorization ──▶ Capture ──▶ Refund
 **范围：** auth → capture → refund，不含 void，不含“auth + capture 一步完成”。
 
 ### 4.2 Authorization
+
+**重要度：⭐⭐**
 
 验卡并预留额度，不扣款。
 
@@ -362,6 +374,8 @@ DECLINED 示例：
 
 ### 4.3 Capture
 
+**重要度：⭐⭐**
+
 从已预留的额度里真正扣款。**只支持对一个 auth 做一次全额 capture。**
 
 卡和金额币种已在 auth 里，capture 只需要说“扣多少”，并用 `processorTransactionId` 找到对应的 auth。
@@ -424,6 +438,8 @@ Idempotency-Key: capture-order-100-1
 > "Capture only needs the transaction ID, the amount and the currency. The card is already on the authorization. We allow one full capture per authorization, so the amount has to match. And two captures can't both win: we move the authorization from AUTHORIZED to CAPTURING with a conditional update, and only one gets through."
 
 ### 4.4 Refund
+
+**重要度：⭐⭐**
 
 把已扣的钱退回给持卡人。引用 `processorTransactionId`。因为 capture 只能一次全额，所以**可退总额 = 授权额（已 capture 金额）**。支持**部分退款，可多次**，累计不超过已 capture 金额。
 
@@ -489,6 +505,8 @@ Idempotency-Key: refund-order-100-1
 
 ### 4.5 查询与通用
 
+**重要度：⭐**
+
 ```http
 GET /v1/payments/{processorTransactionId}
 ```
@@ -498,6 +516,8 @@ GET /v1/payments/{processorTransactionId}
 商户身份来自 API key 或 OAuth token，在 API gateway 认证，不从请求体里取。
 
 ### 4.6 完整例子：£10.00 的订单
+
+**重要度：⭐⭐**
 
 ```text
 1. POST /v1/payments/authorizations   amount=1000
@@ -517,6 +537,8 @@ GET /v1/payments/{processorTransactionId}
 
 ### 4.7 面试时怎么讲 API
 
+**重要度：⭐⭐**
+
 > "There are three operations. Authorization checks the card and holds the money, but it doesn't take it. It creates a transaction ID and returns it. Capture and refund use that ID in the path, because the card data is already on the authorization.
 >
 > Capture is one full capture per authorization, so the amount must match. Refund can be partial and repeated, up to the captured amount, so we reserve the amount before calling the bank.
@@ -535,6 +557,8 @@ GET /v1/payments/{processorTransactionId}
 | 429 | 超过限流，带 Retry-After |
 
 ### 数据模型
+
+**重要度：⭐⭐**
 
 ```text
 transaction                     （一个 processorTransactionId 一条，从 auth 开始）
@@ -556,6 +580,8 @@ webhook_outbox                  （仅异步结果的 webhook 事件）
 ```
 
 ### Tables in English
+
+**重要度：⭐⭐**
 
 Three core tables, plus an optional audit table. There is no separate idempotency table: each merchant key maps to exactly one operation, so the key lives on the operation row.
 
@@ -604,6 +630,8 @@ operation_status_history        （可选，仅追加）
 
 ### 状态机
 
+**重要度：⭐⭐⭐**
+
 ```mermaid
 stateDiagram-v2
     [*] --> PENDING: created
@@ -623,6 +651,8 @@ stateDiagram-v2
 ---
 
 ## 5. 核心流程（6 步）
+
+**重要度：⭐⭐⭐**
 
 ```text
 1. 接收请求   认证商户，限流
@@ -646,11 +676,15 @@ stateDiagram-v2
 
 ### 第 1 步：接收请求
 
+**重要度：⭐⭐**
+
 - API gateway 认证商户，按商户限流（token bucket）。
 - 超限返回 429 和 Retry-After。
 - 大商户可按协议提高限额；队列或配额按商户隔离，防止一个商户占满资源。
 
 ### 第 2 步：幂等检查
+
+**重要度：⭐⭐⭐**
 
 **为什么：** 商户会重试（网络超时、用户连点）。没有幂等，同一笔付款可能被扣两次。
 
@@ -684,6 +718,8 @@ stateDiagram-v2
 > But the database only protects us. Say the bank takes the payment and we crash before saving the result. That's the gap. So we send the bank a stable idempotency key, we keep the operation as pending, and we recover by status query or reconciliation."
 
 ### 第 3 步：先落库（operation = key + PENDING）
+
+**重要度：⭐⭐⭐**
 
 **为什么：** 调用银行是外部操作，不能回滚。必须先把“要做什么”持久化。
 
@@ -727,6 +763,8 @@ COMMIT
 口诀：Save first, call later. Key + pending. Recover by status.
 
 ### 第 4–5 步：调用银行和处理结果
+
+**重要度：⭐⭐⭐**
 
 **4 个规则：**
 
@@ -788,6 +826,8 @@ COMMIT
 
 ### 第 6 步：通知商户
 
+**重要度：⭐⭐⭐**
+
 - 同步响应：在预算内拿到结果就直接返回最终状态。
 - 异步 webhook：只在商户没拿到最终结果时发（已经返回 202 PENDING，之后结果才出来）。同步成功不写 outbox。响应在网络上丢了，商户可以用同一个 key 重试（返回已保存的响应）或 GET 查询。
 - 商户也可以随时 `GET /v1/payments/{processorTransactionId}` 查询，作为兜底。
@@ -826,6 +866,8 @@ Webhook Worker：
 
 ### 退款：并发时防止多退
 
+**重要度：⭐⭐⭐**
+
 场景：已 capture £100，两个 £70 的退款，key 不同，同时到达。
 
 > "In a short database transaction, we lock the transaction row and check what's left to refund: captured, minus refunded, minus pending refunds. Then we reserve the £70 and create the refund operation as pending. We commit before calling the bank. The reservation stays while the result is unknown. If the refund succeeds, we finalise it. If the bank clearly says no, we release it."
@@ -838,7 +880,11 @@ Webhook Worker：
 
 ## 6. Deep dive 主题
 
+**重要度：⭐⭐⭐**
+
 ### 6.1 银行路由与切换
+
+**重要度：⭐⭐⭐**
 
 | 要点 | 内容 |
 | --- | --- |
@@ -852,6 +898,8 @@ Webhook Worker：
 
 ### 6.2 慢银行隔离（Bulkhead + Circuit Breaker）
 
+**重要度：⭐⭐⭐**
+
 > "Each bank gets its own limited resources, so one slow bank can't use up everything. If a bank keeps failing, we stop sending for a while and let it recover. Payments that can't finish become pending, and we sort them out later."
 
 - 每个银行独立连接池和短超时。
@@ -859,6 +907,8 @@ Webhook Worker：
 - 不要“增加超时一直等”，也不要“立即无限重试”。
 
 ### 6.3 商户限流与多租户
+
+**重要度：⭐⭐**
 
 > "Every merchant has its own limit at the gateway. If a merchant sends too much, we return 429 and tell them when to retry. Big merchants get higher limits by agreement. This way one merchant can't hurt the others."
 
@@ -873,6 +923,8 @@ Webhook Worker：
 > "At the gateway, each merchant has its own rate limit, based on the contract. For the database, I wouldn't shard by merchant, because a big merchant would create a hot shard. We shard by transaction ID, so even one huge merchant spreads across all shards. And each payment and its operations stay on one shard, so the refund balance check is a local transaction. The trade-off is that merchant-level queries cross shards. For those, we use a read store or a secondary index, fed by change data capture. If a merchant needs isolation or data residency, we give it a dedicated shard group through a small directory."
 
 ### 6.4 数据库扩展
+
+**重要度：⭐⭐**
 
 > "We shard by transaction ID, so a transaction and all its captures and refunds stay together. That makes the refund balance check a single local transaction. We use replicas for reads and reports, and we archive old data to cheaper storage."
 
@@ -899,6 +951,8 @@ Webhook Worker：
 
 ### 6.5 监控与告警
 
+**重要度：⭐⭐**
+
 > "I'd watch business metrics first: success rate, latency, and how many payments are stuck in pending. I'd split them by bank and by merchant, so we know where the problem is. I'd alert on symptoms, like a sudden drop in success rate. And I'd use a correlation ID to trace one payment across services, without logging card data."
 
 | 类别 | 指标 |
@@ -913,6 +967,8 @@ Webhook Worker：
 
 ### 6.6 对账（Reconciliation）
 
+**重要度：⭐⭐⭐**
+
 > "Reconciliation is our last safety net. Every day, we compare the bank's settlement file with our records, payment by payment. If a payment is stuck in pending, the bank file tells us the truth. If something doesn't match, we raise it as an exception for people to check. We never edit old records. We add a correcting entry, so there's always an audit trail. And the job itself must be idempotent and restartable, so a crash halfway doesn't break anything."
 
 - 用银行引用号和我们的 operation ID 匹配。
@@ -922,6 +978,8 @@ Webhook Worker：
 - 批处理要幂等、可重启。
 
 ### 6.7 安全与 PCI-DSS
+
+**重要度：⭐⭐**
 
 **PCI-DSS** 是卡组织制定的安全标准：凡是存储、处理、传输卡号的系统都要遵守并定期审计。思路是：**尽量不碰卡数据，范围越小越好。**
 
@@ -951,6 +1009,8 @@ Webhook Worker：
 
 ### 6.8 备份与灾备（Disaster Recovery）
 
+**重要度：⭐⭐**
+
 > "For a payment system, correctness comes first. We run across multiple availability zones with synchronous replication, so one failure never loses a committed payment. For a region failure, we replicate to another region and fail over, with a clear RPO and RTO. And we test restores regularly, because a backup you've never restored isn't a backup."
 
 | 概念 | 含义 |
@@ -976,6 +1036,8 @@ Webhook Worker：
 | What happens to in-flight payments at failover? | 状态不确定的保持 PENDING，查银行或用对账确认；商户用同一幂等键重试返回已保存的响应 |
 
 ### 6.9 Chargeback、争议与账本
+
+**重要度：⭐**
 
 **Chargeback（拒付）：** 持卡人向发卡行争议某笔交易，银行把钱先从商户扣回，商户可提交证据申诉。这是数据要保留到 chargeback 期限之后的原因。
 
@@ -1006,6 +1068,8 @@ Webhook Worker：
 ---
 
 ## 7. 架构图
+
+**重要度：⭐⭐**
 
 ### 整体架构
 
@@ -1072,13 +1136,19 @@ sequenceDiagram
 
 ## 8. 一分钟总结稿
 
+**重要度：⭐⭐⭐**
+
 > "A merchant sends an authorization, capture or refund with an idempotency key. We save the operation in our database first, with a unique constraint, and then call the bank with the same key. A timeout means pending, not failed. Refunds reserve the amount before calling the bank. If the result comes later, we save the final status and the webhook event together, and workers deliver it with retries. Each bank has its own connection pool and a circuit breaker, and we only switch banks when we know the first one didn't process the request. We shard by transaction ID, and we watch the success rate and how old the pending payments are. And reconciliation with the bank files is our final safety net."
 
 ---
 
 ## 9. 追问与答案
 
+**重要度：⭐⭐⭐**
+
 ### 幂等
+
+**重要度：⭐⭐⭐**
 
 | 问题 | 答案要点 |
 | --- | --- |
@@ -1090,6 +1160,8 @@ sequenceDiagram
 | Same key, different body? | 拒绝，返回 422，说明是客户端错误 |
 
 ### 超时与一致性
+
+**重要度：⭐⭐⭐**
 
 | 问题 | 答案要点 |
 | --- | --- |
@@ -1105,6 +1177,8 @@ sequenceDiagram
 
 ### 退款与账务
 
+**重要度：⭐⭐**
+
 | 问题 | 答案要点 |
 | --- | --- |
 | Two concurrent refunds? | 短事务里锁 transaction 行，检查 captured − refunded − pending，增加 pending，再调银行；预留直到结果明确才释放 |
@@ -1113,6 +1187,8 @@ sequenceDiagram
 | Partial refunds? | transaction 与 operation 分开，每个 refund 有自己的金额和状态；capture 只支持一次全额 |
 
 ### 规模与运维
+
+**重要度：⭐⭐**
 
 | 问题 | 答案要点 |
 | --- | --- |
@@ -1129,6 +1205,8 @@ sequenceDiagram
 ---
 
 ## 10. 你的经验怎么接
+
+**重要度：⭐⭐**
 
 以下都需要符合你的真实情况，面试前请自己核对。
 
@@ -1164,6 +1242,8 @@ sequenceDiagram
 ---
 
 ## 11. 常用英文表达
+
+**重要度：⭐**
 
 开场与结构
 
@@ -1212,6 +1292,8 @@ sequenceDiagram
 
 ## 12. 易错点与待补
 
+**重要度：⭐⭐**
+
 ### 你在 mock 中答得不够好的地方
 
 | # | 问题 | 你当时的回答 | 正确要点 |
@@ -1237,7 +1319,11 @@ sequenceDiagram
 
 ## 13. 面试官可能追问的地方（按面试进程）
 
+**重要度：⭐⭐⭐**
+
 ### 13.1 开场阶段：看你有没有先问清楚
+
+**重要度：⭐⭐**
 
 | 面试官的意图 | 可能的问题或情况 | 你要做的 | 对应章节 |
 | --- | --- | --- | --- |
@@ -1247,6 +1333,8 @@ sequenceDiagram
 | 优先级判断 | "Availability or correctness?" | 开场就说 correctness 优先 | 12 |
 
 ### 13.2 核心流程：最容易被深挖的地方
+
+**重要度：⭐⭐⭐**
 
 | 追问方向 | 典型问题 | 要点 | 对应章节 |
 | --- | --- | --- | --- |
@@ -1260,6 +1348,8 @@ sequenceDiagram
 
 ### 13.3 深入阶段：规模、可靠性、运维
 
+**重要度：⭐⭐**
+
 | 追问方向 | 典型问题 | 要点 | 对应章节 |
 | --- | --- | --- | --- |
 | 分片 | "How do you shard? What about a big merchant?" | 按 transaction ID，不按商户；二级索引或读库处理商户查询 | 6.3、6.4 |
@@ -1272,6 +1362,8 @@ sequenceDiagram
 
 ### 13.4 Checkout.com 面经里点名的主题
 
+**重要度：⭐⭐**
+
 | 主题 | 典型问题 | 要点 | 对应章节 |
 | --- | --- | --- | --- |
 | **外部服务的容错** | "Resilience when calling external services" | 超时、重试退避、熔断、bulkhead、PENDING | 6.2 |
@@ -1282,6 +1374,8 @@ sequenceDiagram
 | **重试下状态正确** | "How does status stay correct across retries?" | 幂等键、状态机、条件更新、operation 为单位 | 4、5 |
 
 ### 13.5 容易被问到但文档较薄的主题（补充要点）
+
+**重要度：⭐**
 
 | 主题 | 问题 | 回答要点 |
 | --- | --- | --- |
@@ -1300,6 +1394,8 @@ sequenceDiagram
 
 ### 13.6 反向提问：面试官问"你有什么问题"
 
+**重要度：⭐**
+
 可以问，体现你理解支付系统：
 
 - Checkout 现在如何处理银行结果未知的情况，是对账还是主动查询？
@@ -1308,6 +1404,8 @@ sequenceDiagram
 - 灾备演练多久做一次，最近有没有发现什么问题？
 
 ### 13.7 面试时的节奏提示
+
+**重要度：⭐⭐**
 
 1. 先 clarify（3–5 分钟），写下范围、规模、范围外。
 2. 说出 correctness 优先，作为后面所有取舍的依据。
