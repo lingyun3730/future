@@ -11,7 +11,10 @@
 - 代价：至少一次执行，任务必须幂等。
 - 我的角色：财务报表场景的重度使用者；调试时发现框架问题就主动修复（不要说成设计了框架，开源仓库唯一作者是 Lionel Liu）。
 - 我的改进 1：调试时发现有线程无限 retry 又停不下来 → 在基础框架加 retry 策略（exponential backoff），并开放 API 可以 kill 掉一直 retry 的线程。
-- 我的改进 2：用的人变多后，团队做了 UI portal（etcd 的可视化界面：当前有哪些 job 在跑、有哪些 task adoptions），集中监控和管理正在运行的线程，发现无效 retry 的线程就在 portal 上 kill；UI 有权限控制。（我在 UI 里的具体角色：待补）
+- kill 的两个真实用途（含义不同，要分开讲）：
+  - 场景 A：无限 retry 的线程。kill 只是止血（stop the bleeding）：task 仍是 todo，别的 worker 可能再领走，根治要靠 backoff、ban job、修根因。
+  - 场景 B：某个节点 pick 了太多 task，内存不够。kill 就是目的：释放 adoption，task 回到 todo，由内存够的节点重新领走。事后再调"单个 instance 最多同时跑几个 worker"的参数。因为 task 的内存消耗跑之前不知道，参数无法事先配准，所以需要 kill 快速恢复。
+- 我的改进 2：用的人变多后，团队做了 UI portal（etcd 的可视化界面：当前有哪些 job 在跑、有哪些 task adoptions），集中监控和管理正在运行的线程，发现无效 retry 或节点过载时就在 portal 上 kill；UI 有权限控制。（我在 UI 里的具体角色：待补）
 
 ## 口述提示卡
 
@@ -22,6 +25,7 @@
 5. 至少一次 → 幂等
 6. FAILED vs ERROR，CAN_FAIL
 7. 我做了什么：发现无限 retry → 加 exponential backoff + kill API → 后来团队做 portal 集中监控和 kill（带权限）
+8. kill 的两种用法：A 无限 retry（止血，不治本）；B 节点内存不够（释放后别的节点接手，之后调 max workers 参数）
 
 ## 30-second Overview
 
@@ -39,7 +43,7 @@ At eBay, my team used an internal distributed task framework called TasCreed to 
 
 **Failure handling.** A task result is either FAILED, an expected failure that can be retried, or ERROR, an unexpected exception. A step can be marked as allowed to fail, so it does not block later steps. Only successful jobs are archived. Failed ones stay visible, so we can retry them.
 
-**My part.** I was a heavy user of the framework, mainly for generating our financial reports. When I found something to improve while debugging, I fixed it in the framework myself. For example, I noticed some threads were retrying endlessly and I had no way to stop them in time. So I added retry strategies to the base framework, such as exponential backoff, and I exposed an API to kill threads that keep retrying. Later, more teams started using the framework, so we built a UI portal to monitor and manage the running threads in one place. The portal shows the data in etcd, such as which jobs are running and which tasks are adopted. If a task is stuck, authorized people can kill its adoption from the portal. The portal has permission control, so only authorized people can do that. [待补: your exact role in the portal.]
+**My part.** I was a heavy user of the framework, mainly for generating our financial reports. When I found something to improve while debugging, I fixed it in the framework myself. For example, I noticed some threads were retrying endlessly and I had no way to stop them in time. So I added retry strategies to the base framework, such as exponential backoff, and I exposed an API to kill threads that keep retrying. The same API also helps when one node picks up too many tasks and runs out of memory: killing a task releases it, and a node with enough memory picks it up. Later, more teams started using the framework, so we built a UI portal to monitor and manage the running threads in one place. The portal shows the data in etcd, such as which jobs are running and which tasks are adopted. If a task is stuck or a node is overloaded, authorized people can kill its adoption from the portal. The portal has permission control, so only authorized people can do that. [待补: your exact role in the portal.]
 
 ### My improvement story (STAR)
 
@@ -51,6 +55,15 @@ At eBay, my team used an internal distributed task framework called TasCreed to 
 ### Why this matters (tie it to the architecture)
 
 "Because the framework is at-least-once and retry-based, a task that can never succeed can loop forever. Backoff limits the damage, and the kill switch gives humans the last word."
+
+### Second use of kill: an overloaded node
+
+- **Situation:** There is no leader, so each worker picks tasks by itself and the framework cannot place tasks by resource capacity. Sometimes one node picked up too many tasks and ran short of memory. We could not know a task's memory cost before it ran.
+- **Action:** I killed some tasks on that node. This deletes their adoption, so each task goes back to todo and a node with enough memory picks it up. No restart or redeploy was needed.
+- **Follow-up:** Afterwards, we tuned the setting for how many workers one instance can run at the same time.
+- **Why kill helps here but not in the endless-retry case:** The problem is the node, not the task. Another node can run the same task successfully. With an endless-retry task, a new worker would just fail again, so kill only stops the bleeding there, and the real fix is backoff, banning the job, or fixing the root cause.
+
+"With no leader, a node can take more tasks than its memory can handle, and we can't know the cost in advance. Killing a task is a fast way to rebalance. The long-term fix is tuning the max workers per instance." [待补: how the worker thread stops and frees memory after the kill, and whether you used affinity or ban rules.]
 
 ## Technical Deep Dive
 
@@ -165,17 +178,23 @@ Check the job and step states, find the failing task, look at its logs and adopt
 With a fixed retry interval, a failing dependency gets hit again and again at the same rate. With exponential backoff, the wait grows after each failure, so it reduces load and gives the dependency time to recover. [待补: the max delay and max retry count you chose, and whether you added jitter.]
 
 **Q: Why not just limit the retry count?**
-A count limit helps, but some failures are temporary and long, like an etcd or downstream outage, so we still want to retry for a while. Backoff handles that. The kill API covers cases we didn't predict. [Check this matches what you did.]
+A count limit helps, but some failures are temporary and long, like an etcd or downstream outage, so we still want to retry for a while. Backoff handles that. The kill API covers cases we didn't predict, such as a node running out of memory because it picked up too many tasks. [Check this matches what you did.]
 
 **Q: How does the kill API work?**
 "It deletes the task's adoption key in etcd. On its next heartbeat, the worker reads the adoption key, finds it missing or different, and the heartbeat fails with a non-retryable error. The occupation is marked as no longer alive, so the task is released. This reuses the same lease-and-heartbeat mechanism that handles node crashes, so we didn't need a new kill channel." [待补: how the worker thread itself stops after losing the occupation, and how long it takes, up to one heartbeat period, which is about TTL/3.]
 Be ready for: killing is not cancelling the job. The task is still todo, so another node may pick it up again. To really stop it, ban or delete the job. Also, the kill takes effect at the next heartbeat, not instantly.
 
 **Q: What happens to the task after a kill?**
-"The adoption is gone, so the task is released and is still todo. Another worker can pick it up and run it again, which is safe because tasks are idempotent. If we want it to stop for good, we ban the job." [待补: what you actually did in practice.]
+"The adoption is gone, so the task is released and is still todo. Another worker can pick it up and run it again, which is safe because tasks are idempotent. What I do next depends on why I killed it. If a node was overloaded, I want another node to take it, so I just kill and later tune the max workers per instance. If the task can never succeed, I ban the job so it stops for good." [待补: what you actually did in practice.]
+
+**Q: Killing the thread doesn't fix the root problem, because another worker will pick the task again. Why is it useful?**
+"It depends on the case. For an overloaded node, the task itself is fine, so being picked up by another node is exactly what we want. For a task that can never succeed, kill only stops the bleeding, and I follow up by banning the job and fixing the root cause. In both cases kill buys time without a redeploy."
+
+**Q: Why not just set a lower max workers per instance up front?**
+"We can and we do tune it, but we don't know a task's memory cost before the job runs, so we can't set it right in advance. Kill is the quick fix when it goes wrong, and then we adjust the setting." [待补: whether the limit is by count only, or whether you considered memory-aware assignment.]
 
 **Q: How did you decide which threads to kill?**
-We watched the portal for threads stuck in repeated retries with the same error and no progress. [待补: what signals you used, such as retry count, running time, or error message.]
+Two signals: threads stuck in repeated retries with the same error and no progress, and tasks on a node that is running low on memory. [待补: what signals you used, such as retry count, running time, memory metrics, or error message.]
 
 **Q: Why build a portal?**
 As more people used the framework, calling APIs by hand did not scale. A central UI shows all running threads, and operators can act quickly.
@@ -187,7 +206,7 @@ It has permission control, so only authorized users can view or kill threads. Ki
 [待补.] The open-source repo has retry strategies (equal, linear backoff, backoff) and API to delete a task adoption. Check with your own history whether these are yours before claiming them.
 
 **Q: Tell me about a time you improved a tool you were using.**
-Use the retry story above. Lead with the pain (endless retries), then what you built, then how it grew into a team portal.
+Use the retry story above. Lead with the pain (endless retries), then what you built, then how it grew into a team portal. If asked for another example, use the overloaded-node case.
 
 **Q: What was the hardest problem?** [待补]
 Possible angles: duplicate execution after failover, idempotency of report output, stuck jobs, upgrade compatibility.
@@ -213,7 +232,8 @@ Possible answers (these are design observations, not facts about our system): re
 ## 下一轮需要补齐的事实
 
 1. 我的贡献细节（已知：加了 exponential backoff 等 retry 策略和 kill API；团队做了带权限的 portal）。还缺：
-   - kill 之后 Worker 线程本身怎么停下来、多久生效（已知：删 etcd 上的 adoption，心跳找不到后释放 Task）
+   - kill 之后 Worker 线程本身怎么停下来、多久生效、内存什么时候释放（已知：删 etcd 上的 adoption，心跳找不到后释放 Task）
+   - 节点内存不够时 kill 的具体事件：哪个 job、怎么发现的（监控/告警）、调整后的 max workers 参数值
    - backoff 的参数（初始间隔、上限、最大次数、是否有 jitter）
    - portal 里我具体做了什么（前端、后端、需求、权限设计？）
    - 哪些改动合进了开源版本（`ACKNOWLEDGEMENTS.md` 里有 Lintao Dang，但 Contributors 里没有）
@@ -233,8 +253,8 @@ Possible answers (these are design observations, not facts about our system): re
 | 原则 | 我的例子 |
 | --- | --- |
 | 为失败设计：有界重试 | 发现线程无限重试，给基础框架加了指数退避，重试越来越慢，避免打爆依赖 |
-| 永远留人工开关 | 退避只限制损害，所以加了 kill API；后来 portal 让有权限的同事 kill 卡住的 task adoption |
+| 永远留人工开关 | 退避只限制损害，所以加了 kill API；后来 portal 让有权限的同事 kill 卡住的 task adoption。另一个用途：节点 pick 了太多 task 内存不够，kill 后让别的节点接手，之后再调 max workers 参数（task 内存消耗事先未知，参数无法提前配准） |
 | 在根上修，不绕开 | 调试时发现问题，直接改基础框架，所有团队受益，而不是在每个报表里各自处理 |
 | 重复执行要安全（幂等） | 框架是 at-least-once，每个 shard 的输出文件名固定，重跑覆盖旧文件，不产生重复 |
 
-> One principle I follow is designing for failure. In our task framework, some tasks retried endlessly. I added exponential backoff so retries slow down instead of hammering the dependency. But backoff only limits the damage, so I also added a kill API, so people always have a manual override. I fixed it in the framework itself, so every team benefited. And since the framework runs tasks at least once, each report shard writes to a fixed file name, so a re-run just overwrites the old file.
+> One principle I follow is designing for failure. In our task framework, some tasks retried endlessly. I added exponential backoff so retries slow down instead of hammering the dependency. But backoff only limits the damage, so I also added a kill API, so people always have a manual override. It also helped when one node picked up too many tasks and ran short of memory: kill released the task so another node could take it, and we tuned the worker limit afterwards. I fixed it in the framework itself, so every team benefited. And since the framework runs tasks at least once, each report shard writes to a fixed file name, so a re-run just overwrites the old file.
