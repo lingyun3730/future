@@ -861,6 +861,15 @@ COMMIT
 
 **重要度：⭐⭐⭐**
 
+**风控的位置（范围外，但要说清楚放哪里）：** 在第 3 步落库之后、调银行之前。
+
+> "The fraud check runs after the operation is saved and before we call the bank. If the risk is too high, we mark the operation DECLINED and do not call the bank. We save the decision on the operation, so a retry with the same key gets the same result. If the risk service times out, we let the payment go through by default, because the bank has its own checks. We use simple local rules as a fallback (amount limit, blocklist, rate limit), mark the payment as unscored, and alert. For high-risk merchants, this can be set to reject instead."
+
+- 不能放在调银行之后，那时钱已经扣了。
+- 风控拒绝是明确的失败（402），不是未知。
+- 决定存进 operation，重试时不重新评分（分数可能变化，会导致第一次拒绝、第二次放行）。
+- 评分调用要有很短的超时和熔断，不能占用整个授权的响应预算。
+
 **4 个规则：**
 
 | 规则 | 做法 |
@@ -1024,6 +1033,16 @@ Webhook Worker：
 - 限流按合同设置速率和突发额度；上游限流也保护了数据库，一个商户写不了无限多。
 - 连接池和 worker 容量按商户分配份额，防止突发饿死恢复 worker 和 webhook worker。
 
+**重试风暴（延迟升高 → 超时 → 同时重试 → 更慢）：** 分层处理。
+
+> "When latency goes up, clients time out and retry at the same time, which makes things worse. We handle it in layers. Clients use exponential backoff with jitter. The gateway rate limits each merchant and returns 429 with a Retry-After header. Because of the idempotency key, a retry returns the saved result. It never calls the bank again, and it never charges twice. The bank adapter has a circuit breaker, so we fail fast when the bank is slow. Our own retries (recovery and webhooks) also use backoff with jitter."
+
+- 客户端：指数退避加抖动（jitter）。抖动是关键，避免大量客户端在同一时刻重试。
+- 网关：按商户限流，429 加 `Retry-After`。
+- 幂等：重复请求被唯一键拦住，返回已存结果或 202，成本很低，不会打到银行。
+- 银行适配层：熔断，快速失败，不让重试压垮银行和连接池。
+- 我们自己的重试（恢复任务、webhook）同样带退避和抖动。
+
 **流量不均和数据不均是两个问题：** 流量靠网关限流，数据分布靠分片键。**不要把同一个商户的交易放进同一个分片。**
 
 > "At the gateway, each merchant has its own rate limit, based on the contract. For the database, I wouldn't shard by merchant, because a big merchant would create a hot shard. We shard by transaction ID, so even one huge merchant spreads across all shards. And each payment and its operations stay on one shard, so the refund balance check is a local transaction. The trade-off is that merchant-level queries cross shards. For those, we use a read store or a secondary index, fed by change data capture. If a merchant needs isolation or data residency, we give it a dedicated shard group through a small directory."
@@ -1080,6 +1099,9 @@ Webhook Worker：
 > "Reconciliation is our last safety net. Every day, we compare the bank's settlement file with our records, payment by payment. If a payment is stuck in pending, the bank file tells us the truth. If something doesn't match, we raise it as an exception for people to check. We never edit old records. We add a correcting entry, so there's always an audit trail. And the job itself must be idempotent and restartable, so a crash halfway doesn't break anything."
 
 - 用银行引用号和我们的 operation ID 匹配。
+- **为什么不用时间或金额匹配：** 两边的时钟、时区和日切时间不同（我们 23:59:59，银行记成第二天 00:00:01），而且一天里有大量相同金额的交易。所以只按 ID 一对一匹配。
+- **时间差不算错误：** 我们有、但银行文件里还没有的交易，先等下一个文件再对；超过约定的结算时间还没有，才算异常。
+- 匹配成功的 operation 标记为已对账（`reconciled_at`），方便排查哪些还没对上。结算和打款本身不在范围内。
 - 比较状态、金额、币种。对比三方：银行文件、我们的数据库、商户视图。
 - 三类差异：银行有、我们没有；我们有、银行没有；金额或状态不同（重复也算）。
 - 处理：明确的情况自动修复（如卡在 PENDING、银行显示已批准）；其余进人工复核并告警。
@@ -1188,7 +1210,9 @@ Webhook Worker：
 flowchart LR
     M[Merchant] --> GW[API Gateway<br/>auth + rate limit]
     GW --> PS[Payment Service]
+    PS -.score, short timeout.-> RS[Risk Service<br/>fail open]
     PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>webhook outbox)]
+    DB -.CDC.-> RO[(Read Store<br/>merchant lists, reports)]
     DB --> BW[Recovery Workers<br/>scan PENDING]
     DB --> WW[Webhook Workers<br/>read outbox]
     PS --> BA[Bank Adapter<br/>per-bank pool + circuit breaker]
@@ -1208,22 +1232,29 @@ sequenceDiagram
     actor M as Merchant
     participant API as Payment Service
     participant DB as Database
+    participant RS as Risk Service
     participant BK as Bank
     participant WW as Webhook Worker
 
     M->>API: POST /v1/payments/authorizations (Idempotency-Key)
     API->>DB: txn: insert operation PENDING (claims key) + update transaction
-    API->>BK: authorize (bank idempotency key = operationId)
-    alt answer within budget
-        BK-->>API: approved / declined
-        API->>DB: txn: update status (no outbox)
-        API-->>M: 200 final status
-    else timeout
-        API->>DB: keep PENDING / UNKNOWN
-        API-->>M: 202 PENDING
-        Note over API,BK: recovery worker: status query / callback / reconciliation
-        BK-->>API: final result
-        API->>DB: txn: update status + webhook outbox
+    API->>RS: risk score (short timeout, fail open)
+    alt high risk
+        API->>DB: txn: operation FAILED, transaction DECLINED (no bank call)
+        API-->>M: 402 DECLINED
+    else allowed
+        API->>BK: authorize (bank idempotency key = operationId)
+        alt answer within budget
+            BK-->>API: approved / declined
+            API->>DB: txn: update status (no outbox)
+            API-->>M: 200 final status
+        else timeout
+            API->>DB: keep PENDING / UNKNOWN
+            API-->>M: 202 PENDING
+            Note over API,BK: recovery worker: status query / callback / reconciliation
+            BK-->>API: final result
+            API->>DB: txn: update status + webhook outbox
+        end
     end
     WW->>M: signed webhook, async path only (event ID, retries with backoff)
 ```
@@ -1266,7 +1297,7 @@ sequenceDiagram
 | 问题 | 答案要点 |
 | --- | --- |
 | How long do you keep the keys? | 一般 24 小时到几天，超期才允许复用；与商户约定，可配置 |
-| DB or Redis for the key? | 以数据库为准（持久、有事务）。Redis 只能做加速，不能作为唯一依据 |
+| DB or Redis for the key? | 以数据库为准（持久、和状态更新在同一个事务）。Redis 只能做加速，不能作为唯一依据：key 可能过期，或主从切换时丢失，重试就会被当成新请求，再次调银行，可能重复扣款。用 Redis 缓存已完成的响应可以减少 DB 压力，Redis 丢了只是变慢，不会出错 |
 | What if the key is claimed but the service crashes before calling the bank? | 记录是 PENDING，恢复 worker 扫描后先查银行状态再继续，不丢也不重复 |
 | Who generates the key? | 商户生成。内部重试时用 operation ID 作为银行幂等键 |
 | Is idempotency exactly-once? | 不是。传输至少一次，效果只生效一次 |
@@ -1315,6 +1346,9 @@ sequenceDiagram
 | What if the merchant's server is down for hours? | 重试窗口内退避重试；超出后停止并告警，商户恢复后可重放或查询 |
 | Webhook order? | 不保证全局顺序；带版本或时间戳；商户可回查最新状态 |
 | What do you monitor? | 成功率、延迟、PENDING 数量和年龄、按银行和商户拆分；对症状告警 |
+| Latency spikes and clients all retry? | 客户端退避加抖动；网关限流，429 加 Retry-After；幂等 key 让重试不会调银行也不会重复扣款；银行熔断 |
+| Fraud service is down? | 默认放行，因为银行也有风控；用本地规则兜底（金额上限、黑名单、速率），标记未评分并告警；高风险商户可配置为拒绝 |
+| Outbox: poll or CDC? | 我们轮询：outbox 很小（只在商户没拿到最终结果时才写），重试次数和下次重试时间本来就在表里。CDC（如 Debezium 加 Kafka）延迟更低、适合多个下游消费同一事件，但多了组件，webhook 重试状态仍要单独存 |
 | How do you handle a webhook backlog? | 监控积压和最老事件年龄；水平扩展 webhook worker |
 | How do you roll back faulty payment logic? | 功能开关、灰度发布、快速回滚；操作幂等，状态可恢复；用对账修正已发生的错误 |
 
