@@ -52,7 +52,7 @@ Say: "Insert the operation first. The unique key decides who wins, no check-then
 2. **Timeout = unknown, never failed.** Mark UNKNOWN, recovery asks the bank.
 3. **Bank idempotency:** `operationId` is sent to the bank as its idempotency key. Our DB key protects only us, not the bank.
 4. **No DB transaction during the bank call.** It holds locks and connections for too long.
-5. **Recovery worker:** scan old PENDING / UNKNOWN rows, claim with `SKIP LOCKED` or a lease, query the bank first, then retry with the same bank key.
+5. **Recovery worker:** scan old PENDING / UNKNOWN rows, query the bank first, then retry with the same bank key. Workers claim rows with a lease, so two workers don't process the same row and don't wait for each other.
 6. **Don't switch to another bank when the result is unknown.** You could charge twice.
 7. **Reconciliation** with bank files is the final safety net.
 
@@ -82,14 +82,15 @@ A translation layer per bank, with one unified interface: `authorize / capture /
 - At-least-once → merchants dedupe by event id. (See `webhook-system-design-prep.md`.)
 
 ## 9. Scale
-- Shard by `processorTransactionId` (shard id is inside the id). **Never one merchant per shard.**
-- Authorization routes by `hash(merchant_id, idempotency_key)`, so duplicates meet in the same place.
+- A transaction's shard is chosen at authorization by `hash(merchant_id, idempotency_key)`, so retries (which have no id yet) reach the same shard and its unique key catches duplicates.
+- The shard id is embedded in `processorTransactionId`, so every later request (capture, refund, get) routes to the same shard without a lookup table. All operations of one payment live on one shard.
+- **Never one merchant per shard** (a large merchant would create a hot shard).
 - Per-merchant rate limits at the gateway (see `rate-limiter-system-design-prep.md`).
 - Merchant queries: from a read store fed by CDC, not the primary DB.
 - Whale merchant: dedicated shard group.
 
 ## One-minute answer
-"I clarify flows, scale and correctness first. The API has authorize, capture, refund and get, with an idempotency key. In the DB I keep three tables: transaction for current state and the lock point, operation for every call with a unique idempotency key, and a webhook outbox. For each request, I insert the operation as PENDING with the unique key and update the transaction in one DB transaction, then call the bank outside any transaction. A timeout means unknown, never failed, so a recovery worker asks the bank and retries with the same bank idempotency key. Refunds use a conditional update on the transaction row so concurrent refunds can't exceed the captured amount. I shard by transaction id, and reconciliation is the final safety net."
+"I clarify flows, scale and correctness first. The API has authorize, capture, refund and get, with an idempotency key. In the DB I keep three tables: transaction for current state and the lock point, operation for every call with a unique idempotency key, and a webhook outbox. For each request, I insert the operation as PENDING with the unique key and update the transaction in one DB transaction, then call the bank outside any transaction. A timeout means unknown, never failed, so a recovery worker asks the bank and retries with the same bank idempotency key. Refunds use a conditional update on the transaction row so concurrent refunds can't exceed the captured amount. I pick a transaction's shard at authorization by hashing the merchant id and idempotency key, and embed it in the transaction id so all later requests reach the same shard, and reconciliation is the final safety net."
 
 ## Follow-ups
 | Question | Short answer |

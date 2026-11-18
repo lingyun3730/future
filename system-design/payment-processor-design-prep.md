@@ -835,7 +835,11 @@ COMMIT
 | operation 上的 idempotency key（唯一约束） | 商户重复提交同一个请求 |
 | operation 的状态 PENDING（“我要调银行”的意图） | 我们崩溃后，忘了要调银行 |
 
-**PENDING 记录本身就是任务。** 崩溃重启后，恢复 worker 扫描超过一定时间的 PENDING 记录（`status, updated_at` 建索引），用 `SELECT ... FOR UPDATE SKIP LOCKED` 或租约认领，先向银行查询真实状态，再决定重试还是更新结果。只扫描超过同步预算的记录，避免和仍在等银行的请求线程抢；即使抢到，同一个银行幂等键也保证不会重复处理。不需要额外的 outbox 来调度“调银行”。
+**PENDING 记录本身就是任务。** 崩溃重启后，恢复 worker 扫描超过一定时间的 PENDING 记录（`status, updated_at` 建索引），先向银行查询真实状态，再决定重试还是更新结果。只扫描超过同步预算的记录，避免和仍在等银行的请求线程抢；即使抢到，同一个银行幂等键也保证不会重复扣款。不需要额外的 outbox 来调度“调银行”。
+
+**多个 worker 怎么不重复处理同一行：** worker 用**租约**认领记录，这样两个 worker 不会处理同一行，也不用互相等待。租约是一条条件更新：`UPDATE operation SET lease_until = now() + 30s WHERE id = ? AND status IN ('PENDING','UNKNOWN') AND (lease_until IS NULL OR lease_until < now())`，更新 1 行才算抢到，抢到后马上提交，再在事务外查银行；worker 崩溃后租约过期，别人接手。（短任务也可以用 `SELECT ... FOR UPDATE SKIP LOCKED`，但它要持有事务，不适合包含银行调用的任务。）
+
+**最终保证是写结果时的条件更新：** `UPDATE operation SET status = 'SUCCESS' WHERE id = ? AND status IN ('PENDING','UNKNOWN')`，更新 1 行的 worker 才去修改 transaction 的金额（如 `refunded += amt, pending -= amt`），0 行说明别人已处理，什么都不做。这样即使认领失效，金额也只会累加一次。银行调用本身幂等，重复的风险在于我们自己的计数器。
 
 > outbox 只用在第 6 步的 webhook：最终结果和 webhook 事件要同事务保存，而且投递有自己的重试状态。
 
