@@ -51,7 +51,7 @@ index = (n - 1) & hash;            // n 是 2 的幂
 
 - **条件：** 链表长度 ≥ 8，**并且**数组长度 ≥ 64。如果数组长度 < 64，先**扩容**而不是转树。
 - **退化：** 树节点数 ≤ 6，转回链表。
-- **为什么阈值是 8：** 在 hash 分布良好时，一个桶里出现 8 个节点的概率极低（泊松分布，约千万分之六）。转树是对极端情况（差的 hash 函数、恶意构造冲突）的保护，把最坏查询从 O(n) 降到 O(log n)。
+- **为什么阈值是 8：** 在 hash 分布良好时，一个桶里出现 8 个节点的概率极低（泊松分布，源码注释给出约 0.00000006，即亿分之六）。转树是对极端情况（差的 hash 函数、恶意构造冲突）的保护，把最坏查询从 O(n) 降到 O(log n)。
 - **为什么 8 转树、6 退化：** 中间留 7 作缓冲，避免在边界反复转换。
 
 **English:** "When a bucket's list reaches 8 nodes and the table has at least 64 slots, it's converted into a red-black tree, so the worst-case lookup is O(log n) instead of O(n). If the table is smaller than 64, it resizes first. It turns back to a list at 6 nodes, and the gap prevents flip-flopping."
