@@ -40,8 +40,13 @@
 - **有序性：只保证分区内有序，不保证 topic 全局有序。**
 - **需要顺序怎么办：** 用**业务 key**（如订单 id、账户 id）作为消息 key，同一个 key 的消息在同一个分区，就能按顺序消费。
 - **注意：** 增加分区数会改变 `hash(key) % 分区数` 的结果，**同一个 key 会换分区**，顺序可能被破坏，所以分区数要提前规划。
+- **端到端有序要三个环节都不破坏：**
+  1. **生产端：** 发送失败重试时，后一条可能先成功而乱序。开启幂等生产者（`enable.idempotence=true`），重试也保持顺序；或把 `max.in.flight.requests.per.connection` 设为 1。
+  2. **消费端：** 一个分区同一时间只被组内一个消费者读，但如果消费者把消息**丢给线程池并发处理**，处理顺序就乱了。要单线程处理，或按 key 分发到固定线程。
+  3. **分区数：** 不要中途改变。
+- **代价：** 同一个 key 的消息只能串行处理，流量特别大的 key 会形成**热点分区**。
 
-**English:** "Kafka only guarantees order within a partition. To keep related messages in order, I use a business key, such as the account id, as the message key, so they go to the same partition."
+**English:** "Kafka only guarantees order within a partition. To keep related messages in order, I use a business key, such as the account id, as the message key, so they go to the same partition. To keep that order end to end, I enable the idempotent producer so retries don't reorder messages, and I process each partition sequentially."
 
 [项目] 记账数据如果要求同一账户的流水有序，就应该用账户 id 作为 key。[待补] 你们实际的 key 和分区策略。
 
@@ -77,8 +82,8 @@
 消息链路分三段，每一段都要保证：
 
 **① 生产者端：**
-- `acks=all`（或 -1）：**所有 ISR 副本**都写入才算成功。`acks=1` 只要 leader 写入，leader 挂了可能丢；`acks=0` 不等确认，最不可靠。
-- **开启重试**：`retries` 设大，配合 `delivery.timeout.ms`。
+- `acks=all`（或 -1）：**所有 ISR 副本**都确认收到才算成功。注意是"收到"（写入页缓存），**不一定已刷盘**，持久性靠多副本。`acks=1` 只要 leader 写入，leader 挂了可能丢；`acks=0` 不等确认，最不可靠。
+- **开启重试**：`retries` 设大，配合 `delivery.timeout.ms`，并开启 `enable.idempotence=true`，重试不会重复也不会乱序。
 - 使用**带回调的发送**，处理失败（日志、告警、落库重发），不要只"发出去就算"。
 
 **② Broker 端：**
@@ -86,9 +91,11 @@
 - **`min.insync.replicas=2`**：ISR 里至少有 2 个副本在线，否则写入失败（配合 `acks=all`）
 - **关闭不干净的 leader 选举**：`unclean.leader.election.enable=false`，不让落后太多的副本当 leader（否则会丢数据）
 - 刷盘依赖多副本，而不是靠每条同步刷盘。
+- **取舍：** ISR 少于 `min.insync.replicas` 时，生产者会收到 `NotEnoughReplicas` 错误，宁可不可用也不丢数据。三者组合的效果：3 个副本里挂 1 个，不丢数据，仍可写。
 
 **③ 消费者端：**
-- **手动提交 offset，并且在业务处理完成之后再提交。**
+- **手动提交 offset，并且在业务处理完成之后再提交**，同时关闭自动提交（`enable.auto.commit=false`）。自动提交按时间间隔提交，可能在消息还没处理完时就提交了，崩溃就丢了。代价是可能重复，所以要配合幂等。
+- **还有一个丢失来源：** 消费太慢、积压严重，消息超过保留时间（retention）被清理，就永远读不到了。要监控 consumer lag 并告警，必要时临时延长 retention。
 
 **English:** "To avoid losing messages, on the producer I use acks=all with retries and handle send failures. On the broker, I use a replication factor of three, min.insync.replicas of two, and disable unclean leader election. On the consumer, I commit offsets manually, after processing."
 
@@ -137,6 +144,12 @@
 1. **顺序写磁盘**：日志只追加，顺序写比随机写快得多，接近内存速度。
 2. **页缓存（Page Cache）**：依赖操作系统缓存，读写先走内存。
 3. **零拷贝（Zero-copy）**：用 `sendfile`，数据从磁盘页缓存直接发到网卡，不经过用户态，省去多次拷贝。
+
+**三者的关系（常被混在一起）：**
+- **一次写入的两个阶段：** 先写入**页缓存**（内存），写入就返回；之后操作系统异步把它刷到磁盘，因为日志只追加，刷盘是**顺序写**。页缓存说的是"先写到哪里"，顺序写说的是"怎么落盘"。
+- **读最新数据：** 还在页缓存里，不用读磁盘。读很旧的数据要读磁盘，但日志连续存放，顺序读也快，系统还会预读。
+- **零拷贝是另一件事：** 说的是发送时数据**不经过应用程序的内存**，由内核直接从页缓存发到网卡。传统方式要拷贝到用户态再拷贝回内核。
+- **TLS 加密时用不了零拷贝**（数据要在应用层加密），吞吐会下降。
 4. **批量处理和压缩**：生产者批量发送，消息可压缩（gzip、snappy、lz4、zstd），减少网络和磁盘开销。
 5. **分区并行**：多个分区分布在多个 broker，并行读写。
 
