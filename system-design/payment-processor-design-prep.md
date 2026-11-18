@@ -1210,7 +1210,9 @@ Webhook Worker：
 flowchart LR
     M[Merchant] --> GW[API Gateway<br/>auth + rate limit]
     GW --> PS[Payment Service]
+    PS -.score, short timeout.-> RS[Risk Service<br/>fail open]
     PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>webhook outbox)]
+    DB -.CDC.-> RO[(Read Store<br/>merchant lists, reports)]
     DB --> BW[Recovery Workers<br/>scan PENDING]
     DB --> WW[Webhook Workers<br/>read outbox]
     PS --> BA[Bank Adapter<br/>per-bank pool + circuit breaker]
@@ -1230,22 +1232,29 @@ sequenceDiagram
     actor M as Merchant
     participant API as Payment Service
     participant DB as Database
+    participant RS as Risk Service
     participant BK as Bank
     participant WW as Webhook Worker
 
     M->>API: POST /v1/payments/authorizations (Idempotency-Key)
     API->>DB: txn: insert operation PENDING (claims key) + update transaction
-    API->>BK: authorize (bank idempotency key = operationId)
-    alt answer within budget
-        BK-->>API: approved / declined
-        API->>DB: txn: update status (no outbox)
-        API-->>M: 200 final status
-    else timeout
-        API->>DB: keep PENDING / UNKNOWN
-        API-->>M: 202 PENDING
-        Note over API,BK: recovery worker: status query / callback / reconciliation
-        BK-->>API: final result
-        API->>DB: txn: update status + webhook outbox
+    API->>RS: risk score (short timeout, fail open)
+    alt high risk
+        API->>DB: txn: operation FAILED, transaction DECLINED (no bank call)
+        API-->>M: 402 DECLINED
+    else allowed
+        API->>BK: authorize (bank idempotency key = operationId)
+        alt answer within budget
+            BK-->>API: approved / declined
+            API->>DB: txn: update status (no outbox)
+            API-->>M: 200 final status
+        else timeout
+            API->>DB: keep PENDING / UNKNOWN
+            API-->>M: 202 PENDING
+            Note over API,BK: recovery worker: status query / callback / reconciliation
+            BK-->>API: final result
+            API->>DB: txn: update status + webhook outbox
+        end
     end
     WW->>M: signed webhook, async path only (event ID, retries with backoff)
 ```
