@@ -137,6 +137,33 @@ Notes:
 - Do not just say "I ask my manager". Bring a proposal.
 - The Buyer FX example is already used in other stories. Keep it to two sentences here.
 
+## Learning quickly: skills + MCP for repetitive tasks
+
+Use for: learning something new quickly, initiative, using new technology, improving productivity, sharing with the team.
+Values: **Aspire** (main), **Excel**. Full details: `../project-coding-examples/ai-workflow-story.md`.
+
+| | |
+|---|---|
+| **Situation** | Many Data Gateway tasks are about reports and webhooks: simple and repetitive. Each one needs the same steps: read Jira, write code and tests, run integration tests in a feature environment, open a PR. |
+| **Learning** | I taught myself to write skills and a local MCP server. I read the official skill documentation, and asked AI to help with much of the setup. I was the first in my team to do this. |
+| **Action** | Skills: coding style, test requirements, PR template. MCP: deploy to the feature environment, send test payloads, collect results. I improved the skills after each feature, until the flow was stable. |
+| **Result** | It rarely needs rework now. I only review at the end. *(Not confirmed: whether teammates use my skills, and any numbers on time saved.)* |
+| **Limit** | For vague requirements (e.g. a dynamic pricing design), AI gave a general design that looked right but did not fit our system. I make design decisions myself. |
+| **Lesson** | Remove ambiguity in instructions. If a person would find it unclear, the AI will too. |
+
+Keywords: `AI tools powerful -> repetitive Data Gateway tasks -> learn skill + MCP from docs -> first in team -> iterate -> review at the end -> limit: vague requirements`
+
+90-second version:
+> When AI tools became really powerful last year, I didn't just use them for vibe coding. I wanted to make them reliable for real work. Many of our Data Gateway tasks are about processing reports and webhooks. They are simple and repetitive, but each one needs the same steps: read the Jira ticket, write the code and tests, run integration tests in a feature environment, and open a PR. I taught myself to write skills and a local MCP server for this. The skills tell the AI our coding style, test requirements and PR template. The MCP connects to the feature environment to deploy code, send test payloads and collect results. I was the first in my team to do this. After a few features, I kept improving the skills, and it became stable, so now I only review the result at the end. I also learned where it doesn't work. With vague requirements, AI gives a general design that doesn't fit our system, so I remove ambiguity in my instructions and make the design decisions myself.
+
+Follow-up answers:
+- **How did you learn it?** I read the official skill documentation, and it was simple. I could even ask AI to help generate much of the setup. *(Confirm: I started with one small skill and grew from there.)*
+- **How do you know it is reliable?** Integration tests run in a real feature environment, the results go into the PR as they are, and I review the PR like any other code.
+
+Notes:
+- Do not claim "production triage" until I can give concrete details. It is not in the story file.
+- No numbers on time saved. Say "clearly less repetitive work, little rework".
+
 ## Why am I leaving / Why Checkout.com
 
 **Why leaving** (one sentence, calm, no complaints):
