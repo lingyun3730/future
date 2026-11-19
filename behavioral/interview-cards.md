@@ -113,6 +113,30 @@ Notes:
 - Follow-up, what if the PM still insisted on skipping tests? Do not argue again with opinion. Put the risk in writing (what could break, impact on customers) and let the PM and my manager decide with the full picture. First try to cut the cost, e.g. test the highest-risk currencies first. *(Hypothetical answer, confirm it matches how I would act.)*
 - Follow-up, how did you raise the concern at the start without data? I had worked on the original Buyer FX project, so I knew where the weak points could be. I presented it as a risk to verify, not a conclusion: "It might be simple, but I think there is a risk. Let me run a quick test before we commit to the plan." *(Not confirmed: the exact experience behind the suspicion, and what I actually said to the PM.)*
 
+## Competing priorities: my usual way, plus Buyer FX
+
+Use for: juggling several projects or stakeholders, deciding what to do first, asking for help early.
+Values: **Excel** (main: ownership, judgment), **Unite** (communication).
+This is a pattern, not one event. Use the four steps, then one short example.
+
+Four steps:
+1. Decide what matters most: business impact, how fixed the deadline is, whether someone is blocked waiting for me.
+2. Try to solve it myself first: cut scope or deliver in phases.
+3. If two things are still urgent, go to my manager with a proposal, not just a problem: "I suggest I focus on A, move B to a colleague, and here is the risk."
+4. Tell the people waiting for the delayed item early, so there is no surprise.
+*(Confirm steps 2 and 4 are how I really work.)*
+
+90-second version:
+> This happens often, since we usually work on several projects at once. My approach has four steps. First, I decide what matters most, based on business impact, how fixed the deadline is, and whether someone is blocked waiting for me. Second, I try to solve it myself, for example by cutting scope or delivering in phases. Third, if two things are still urgent, I go to my manager with a proposal, not just a problem: I suggest I focus on A, move B to a colleague, and explain the risk. Fourth, I tell the people waiting for the delayed item early, so there is no surprise. For example, in the Buyer FX project, I had to unblock the payment graph change and prepare tests at the same time. The payment graph was on the critical path, and the tests were not yet. With my manager's approval, I handed the test preparation to a colleague and spent two days on the payment graph. Test automation was two days late, but we tested manually first, and E2E started on time.
+
+Follow-up answers:
+- **What if the manager cannot shift anything?** I report the bottleneck honestly to the project owner, do my best, and warn them early that the timeline may slip, so they can plan. I also offer alternatives such as phased delivery, and I'm clear about what can be delivered and when.
+- **How do you decide when two things look equally urgent?** I judge the real impact: how much leadership cares, and the benefit to the company or department. If it is still equal, I ask the stakeholders to decide, with the trade-offs explained.
+
+Notes:
+- Do not just say "I ask my manager". Bring a proposal.
+- The Buyer FX example is already used in other stories. Keep it to two sentences here.
+
 ## Why am I leaving / Why Checkout.com
 
 **Why leaving** (one sentence, calm, no complaints):
