@@ -110,7 +110,7 @@ Notes:
 - Do not say "I was right". Say "the test showed".
 - Do not mix numbers: 25 currencies were not configured (payment flow); three components were upgraded (payment and refund).
 - Follow-up, what if the PM still insisted on skipping tests? Do not argue again with opinion. Put the risk in writing (what could break, impact on customers) and let the PM and my manager decide with the full picture. First try to cut the cost, e.g. test the highest-risk currencies first. *(Hypothetical answer, confirm it matches how I would act.)*
-- Follow-up, how did you raise the concern at the start without data? *(Not answered yet.)*
+- Follow-up, how did you raise the concern at the start without data? I had worked on the original Buyer FX project, so I knew where the weak points could be. I presented it as a risk to verify, not a conclusion: "It might be simple, but I think there is a risk. Let me run a quick test before we commit to the plan." *(Not confirmed: the exact experience behind the suspicion, and what I actually said to the PM.)*
 
 ## Why am I leaving / Why Checkout.com
 
