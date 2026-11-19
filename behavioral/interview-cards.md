@@ -98,18 +98,19 @@ Values: **Unite** (main), **Excel** (risk, quality).
 | **Disagreement** | I thought some components might have the supported currencies hard-coded, so we needed testing and more time. |
 | **Action** | I did not argue about opinions. I ran payments with the new currencies. Some did not go through. The trace logs showed a component did not recognize the currency and threw an exception. |
 | **Finding** | 25 currencies were not configured and were blocked. That was only the payment flow. Refund flow was not tested yet, so more problems were possible. |
-| **Result** | It proved every new currency needs end-to-end testing. *(Not confirmed: the PM's reaction, plan change, whether the 25 were fixed, whether refunds were tested later.)* |
+| **Result** | I shared the early results with the PM. He agreed to add testing. We spent two weeks on it. The refund flow had the same problem. In total, three components were upgraded to recognize the new currencies. It proved every new currency needs end-to-end testing. |
 | **Lesson** | When I disagree about risk, show evidence, not opinion. |
 
 Keywords: `PM: simple -> me: hard-coded currencies? -> test -> trace log exception -> 25 blocked -> refund unknown -> E2E per currency`
 
 90-second version:
-> When we expanded Buyer FX to more countries, the PM thought it would be simple, because the feature already existed and we were only adding currencies. I disagreed. I was worried some components might have the supported currencies hard-coded, so we would need testing and more time. Instead of arguing, I tested it. Some currencies didn't go through, and the trace logs showed a component that didn't recognize the currency and threw an exception. In total, 25 currencies were not configured and were blocked, and that was only the payment flow. Refunds were still untested. This showed that every new currency needs end-to-end testing. What I learned is that when I disagree about risk, evidence works better than opinion.
+> When we expanded Buyer FX to more countries, the PM thought it would be simple, because the feature already existed and we were only adding currencies. I disagreed. I was worried some components might have the supported currencies hard-coded, so we would need testing and more time. Instead of arguing, I tested it. Some currencies didn't go through, and the trace logs showed a component that didn't recognize the currency and threw an exception. In total, 25 currencies were not configured and were blocked, and that was only the payment flow. Refunds were still untested. I shared the early results with the PM, and he agreed to add testing. We spent two weeks on it. The refund flow had the same problem, and in total three components were upgraded to recognize the new currencies. What I learned is that when I disagree about risk, evidence works better than opinion.
 
 Notes:
 - Do not say "I was right". Say "the test showed".
-- Be honest about what is unknown (refund flow, outcome). Do not invent the PM's reaction.
-- Likely follow-ups: what if the PM still insisted on skipping tests? How did you raise the concern at the start without data?
+- Do not mix numbers: 25 currencies were not configured (payment flow); three components were upgraded (payment and refund).
+- Follow-up, what if the PM still insisted on skipping tests? Do not argue again with opinion. Put the risk in writing (what could break, impact on customers) and let the PM and my manager decide with the full picture. First try to cut the cost, e.g. test the highest-risk currencies first. *(Hypothetical answer, confirm it matches how I would act.)*
+- Follow-up, how did you raise the concern at the start without data? *(Not answered yet.)*
 
 ## Why am I leaving / Why Checkout.com
 
