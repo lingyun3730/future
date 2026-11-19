@@ -43,24 +43,33 @@ Notes:
 
 ## Cross-team dependency: slow owner of the payment graph
 
-Use for: working with other teams, influence without authority, taking ownership. If asked about a "disagreement", say it was a priority conflict, not a direct argument.
+Use for: priority conflict between teams, working with other teams, influence without authority, taking ownership, a project at risk of delay.
+Values: **Unite** (main), **Excel** (ownership, trade-off).
+If asked about a "disagreement", say it was a priority conflict, not a direct argument.
 
 | | |
 |---|---|
-| **Situation** | I led the in-house Buyer FX project. Part of the change was in the payment graph, owned by another team. The engineer there had other projects, so he was slow and our deadline was at risk. |
-| **Action 1** | I talked to him one-on-one and asked to raise the priority of our work. He agreed, but progress was still slow. |
-| **Action 2** | I saw the problem was his time, not his willingness. With my manager's approval, I handed my test preparation to a colleague and spent two days studying the code to work out the exact changes. He still made the change himself. |
-| **Result** | With a clear plan he finished much faster. The change and testing were done on time. He thanked me afterwards. |
+| **Situation** | I led the in-house Buyer FX project. Part of the change was in the payment graph, owned by another team. The engineer there had other projects, so FX was not his priority, and our deadline was at risk. |
+| **Action 1** | I talked to him one-on-one and asked to raise the priority. He agreed to do it next sprint, but after a sprint progress was still slow. |
+| **Action 2** | I saw the problem was his time, not his willingness. With my manager's approval, I handed my test preparation to a colleague (one hour of requirement sync plus wikis) and spent two days studying the code to work out the exact changes. I met him again and he confirmed the plan. He still made the change himself. |
+| **Result** | With a clear plan he finished in three days. Development was done before E2E testing and E2E started on time. He thanked me afterwards. |
+| **Cost** | Test automation was ready two days later than planned. Testing was not on the critical path, and we ran the first tests manually. |
 | **Lesson** | A request alone is often not enough. Lower the other team's cost: give specifics, so it is easy to say yes and finish. |
 
-Keywords: `payment graph dependency -> 1:1 priority talk -> still slow -> I free two days, study code -> exact plan -> he executes -> on time`
+Keywords: `payment graph dependency -> 1:1 priority talk -> still slow after a sprint -> I free two days, study code -> exact plan -> done in 3 days -> E2E on time`
 
 90-second version:
-> I led the in-house Buyer FX project. Part of the change was in the payment graph, which another team owned. The engineer there had other projects, so his progress was slow, and our deadline was at risk. First, I talked to him one-on-one and asked him to raise the priority. He agreed, but nothing really changed. I realized the problem was not willingness, it was his time. So, with my manager's approval, I handed my test preparation to a colleague and spent two days studying the code, to work out exactly what to change. He still did the change himself, but now he had a clear plan, and it went much faster. We finished the change and the testing on time, and he thanked me afterwards. What I learned is that asking is often not enough. If I make it easier for the other team to help, they can.
+> I led the in-house Buyer FX project. Part of the change was in the payment graph, which another team owned. The engineer there had other projects, so FX was not his priority, and our deadline was at risk. First, I talked to him one-on-one and asked him to raise the priority. He agreed, but after a sprint, progress had not really changed. I realized the problem was not willingness, it was his time. So, with my manager's approval, I handed my test preparation to a colleague, and spent two days studying the code to work out exactly what to change. Then I met him again, and he confirmed the plan. He still made the change himself, but with a clear plan he finished in three days, and we completed development before E2E testing. What I learned is that asking is often not enough. If I make it easier for the other team to help, they can.
+
+Follow-up answers:
+- **Why not escalate?** Escalation is a last resort. His problem was lack of time, not refusal, so escalating would not give him more time, and it could hurt the relationship. I tried to remove the blocker myself first. If it was still blocked close to the deadline, I would raise it openly with my manager. *(Confirm this is how I would really act.)*
+- **What would you do differently?** Act earlier. I waited a full sprint before I saw nothing changed. Next time I would check in after a few days, go to the first conversation with a concrete plan, and align priorities with other teams at project kickoff.
+- **Did handing off the test work cause problems?** A small cost. My colleague needed time to learn the requirements, so test automation was two days late. I chose this on purpose, because testing was not on the critical path while the payment graph change was. I spent one hour on a requirement sync and shared wikis. E2E started on time, and we tested manually until automation caught up.
 
 Notes:
 - The owner stayed responsible for the change. I only gave the plan.
 - I did not escalate. I first tried to remove the blocker myself.
+- "After a sprint" and "three days" come from my own recollection. Keep them consistent.
 
 ## Why am I leaving / Why Checkout.com
 
