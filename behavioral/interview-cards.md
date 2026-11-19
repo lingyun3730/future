@@ -52,6 +52,10 @@ Keywords: `shared query function -> changed in place -> other app alerted -> rol
 90-second version:
 > In my first year at eBay, I was asked to enhance a database query function. It looked simple, so I modified the existing function directly instead of adding a new one. It worked for the new API, but I didn't check who else used it. After the release, another application that shared the function raised an alert. It turned out to be a false alert, but my change had caused it, and I was asked to write an RCA. We rolled back, then released again with a new function and the old one untouched. Since then, I always think about backward compatibility first. For shared code, I add a new function rather than change the old one, and I never change something I don't fully understand.
 
+Follow-up answers:
+- **Constructive criticism / how did you respond?** The clearest feedback came after this release. The RCA showed I should have checked who else used the function before changing it. I did not defend myself: it was my mistake. I rolled back, added a new function and kept the old one untouched. Then I changed my habit: before changing shared code, I check who uses it and prefer adding a new function. *(Confirm: the RCA review gave this feedback directly. Optional: I also ask for feedback early in code reviews, only if true.)*
+- If I have no personal criticism example, say so honestly and use this one. Do not blame others' motives or mention team politics.
+
 Notes:
 - Say "my mistake" clearly. Do not blame others.
 - I don't remember why exactly the alert fired. Say so honestly if asked; focus on the fix and the lesson.
