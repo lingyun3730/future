@@ -87,6 +87,30 @@ Notes:
 - I did not escalate. I first tried to remove the blocker myself.
 - "After a sprint" and "three days" come from my own recollection. Keep them consistent.
 
+## Disagreement: "expanding currencies is simple" (PM) vs hidden risk
+
+Use for: disagreement with a stakeholder, pushing back with evidence, spotting a risk others missed, scope or estimate conflict.
+Values: **Unite** (main), **Excel** (risk, quality).
+
+| | |
+|---|---|
+| **Situation** | Expanding Buyer FX to more countries. The PM saw it as simple: the feature already existed, we were only adding currencies. |
+| **Disagreement** | I thought some components might have the supported currencies hard-coded, so we needed testing and more time. |
+| **Action** | I did not argue about opinions. I ran payments with the new currencies. Some did not go through. The trace logs showed a component did not recognize the currency and threw an exception. |
+| **Finding** | 25 currencies were not configured and were blocked. That was only the payment flow. Refund flow was not tested yet, so more problems were possible. |
+| **Result** | It proved every new currency needs end-to-end testing. *(Not confirmed: the PM's reaction, plan change, whether the 25 were fixed, whether refunds were tested later.)* |
+| **Lesson** | When I disagree about risk, show evidence, not opinion. |
+
+Keywords: `PM: simple -> me: hard-coded currencies? -> test -> trace log exception -> 25 blocked -> refund unknown -> E2E per currency`
+
+90-second version:
+> When we expanded Buyer FX to more countries, the PM thought it would be simple, because the feature already existed and we were only adding currencies. I disagreed. I was worried some components might have the supported currencies hard-coded, so we would need testing and more time. Instead of arguing, I tested it. Some currencies didn't go through, and the trace logs showed a component that didn't recognize the currency and threw an exception. In total, 25 currencies were not configured and were blocked, and that was only the payment flow. Refunds were still untested. This showed that every new currency needs end-to-end testing. What I learned is that when I disagree about risk, evidence works better than opinion.
+
+Notes:
+- Do not say "I was right". Say "the test showed".
+- Be honest about what is unknown (refund flow, outcome). Do not invent the PM's reaction.
+- Likely follow-ups: what if the PM still insisted on skipping tests? How did you raise the concern at the start without data?
+
 ## Why am I leaving / Why Checkout.com
 
 **Why leaving** (one sentence, calm, no complaints):
