@@ -143,7 +143,7 @@ Notes:
 
 ## Learning quickly: skills + MCP for repetitive tasks
 
-Use for: learning something new quickly, initiative, using new technology, improving productivity, sharing with the team.
+Use for: learning something new quickly, initiative, using new technology, improving productivity, sharing with the team, influencing others without authority.
 Values: **Aspire** (main), **Excel**. Full details: `../project-coding-examples/ai-workflow-story.md`.
 
 | | |
@@ -163,6 +163,7 @@ Keywords: `AI tools powerful -> repetitive Data Gateway tasks -> learn skill + M
 
 Follow-up answers:
 - **How did you learn it?** I read the official skill documentation, and it was simple. I could even ask AI to help generate much of the setup. I started with one small skill for one type of task and grew from there.
+- **Influence without authority?** Nobody asked me to do it, and I had no authority over my teammates. I made it work on real features first, then shared it with the team in a meeting and put the skills and MCP server on GitHub, so anyone could set it up on their own. Using it was their choice. They saw it worked and saved effort, so they all use it now. Key idea: make it easy to try, and let the results speak.
 - **How do you know it is reliable?** Integration tests run in a real feature environment, the results go into the PR as they are, and I review the PR like any other code.
 
 Notes:
