@@ -1121,6 +1121,7 @@ Webhook Worker：
 | 方面 | 做法 |
 | --- | --- |
 | 卡数据范围 | 卡号进入独立 vault（PCI 范围小而严格），其他服务只用 token，不在 PCI 范围内 |
+| 调银行时 | 只有 Bank Adapter 在发请求的瞬间向 vault 用 token 换取卡信息，不落库、不写日志 |
 | 绝不存储 | CVV 授权后不能存；完整卡号能不存就不存 |
 | 展示 | 响应、日志、界面只显示后四位 |
 | 传输加密 | 全程 TLS（对商户、对银行） |
@@ -1209,13 +1210,15 @@ Webhook Worker：
 ```mermaid
 flowchart LR
     M[Merchant] --> GW[API Gateway<br/>auth + rate limit]
-    GW --> PS[Payment Service]
+    M -.card number.-> VT[(Card Vault<br/>PCI scope, returns token)]
+    GW --> PS[Payment Service<br/>token only]
     PS -.score, short timeout.-> RS[Risk Service<br/>fail open]
     PS --> DB[(Relational DB<br/>sharded by processorTransactionId<br/>transactions, operations,<br/>webhook outbox)]
     DB -.CDC.-> RO[(Read Store<br/>merchant lists, reports)]
     DB --> BW[Recovery Workers<br/>scan PENDING]
     DB --> WW[Webhook Workers<br/>read outbox]
     PS --> BA[Bank Adapter<br/>per-bank pool + circuit breaker]
+    BA -.token to card details.-> VT
     BW --> BA
     BA --> B1[Bank A]
     BA --> B2[Bank B]
