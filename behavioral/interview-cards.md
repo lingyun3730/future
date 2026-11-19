@@ -157,7 +157,7 @@ Keywords: `AI tools powerful -> repetitive Data Gateway tasks -> learn skill + M
 > When AI tools became really powerful last year, I didn't just use them for vibe coding. I wanted to make them reliable for real work. Many of our Data Gateway tasks are about processing reports and webhooks. They are simple and repetitive, but each one needs the same steps: read the Jira ticket, write the code and tests, run integration tests in a feature environment, and open a PR. I taught myself to write skills and a local MCP server for this. The skills tell the AI our coding style, test requirements and PR template. The MCP connects to the feature environment to deploy code, send test payloads and collect results. I was the first in my team to do this. After a few features, I kept improving the skills, and it became stable, so now I only review the result at the end. I also learned where it doesn't work. With vague requirements, AI gives a general design that doesn't fit our system, so I remove ambiguity in my instructions and make the design decisions myself.
 
 Follow-up answers:
-- **How did you learn it?** I read the official skill documentation, and it was simple. I could even ask AI to help generate much of the setup. *(Confirm: I started with one small skill and grew from there.)*
+- **How did you learn it?** I read the official skill documentation, and it was simple. I could even ask AI to help generate much of the setup. I started with one small skill for one type of task and grew from there.
 - **How do you know it is reliable?** Integration tests run in a real feature environment, the results go into the PR as they are, and I review the PR like any other code.
 
 Notes:
