@@ -59,7 +59,7 @@ Notes:
 
 ## Cross-team dependency: slow owner of the payment graph
 
-Use for: priority conflict between teams, working with other teams, influence without authority, taking ownership, a project at risk of delay.
+Use for: priority conflict between teams, working with other teams, influence without authority, taking ownership, a project at risk of delay, helping a colleague.
 Values: **Unite** (main), **Excel** (ownership, trade-off).
 If asked about a "disagreement", say it was a priority conflict, not a direct argument.
 
@@ -78,6 +78,7 @@ Keywords: `payment graph dependency -> 1:1 priority talk -> still slow after a s
 > I led the in-house Buyer FX project. Part of the change was in the payment graph, which another team owned. The engineer there had other projects, so FX was not his priority, and our deadline was at risk. First, I talked to him one-on-one and asked him to raise the priority. He agreed, but after a sprint, progress had not really changed. I realized the problem was not willingness, it was his time. So, with my manager's approval, I handed my test preparation to a colleague, and spent two days studying the code to work out exactly what to change. Then I met him again, and he confirmed the plan. He still made the change himself, but with a clear plan he finished in three days, and we completed development before E2E testing. What I learned is that asking is often not enough. If I make it easier for the other team to help, they can.
 
 Follow-up answers:
+- **Helping a colleague angle:** A colleague on another team was overloaded with his own projects, and our change was stuck waiting for him. I saw his problem was time, not willingness, so I spent two days studying the code and gave him a clear plan. He finished in three days, and it helped both of us. I also spent one hour syncing requirements with my own colleague who took over my test work. Start from his situation (overloaded), not from my deadline.
 - **Why not escalate?** Escalation is a last resort. His problem was lack of time, not refusal, so escalating would not give him more time, and it could hurt the relationship. I tried to remove the blocker myself first. If it was still blocked close to the deadline, I would raise it openly with my manager. *(Confirm this is how I would really act.)*
 - **What would you do differently?** Act earlier. I waited a full sprint before I saw nothing changed. Next time I would check in after a few days, go to the first conversation with a concrete plan, and align priorities with other teams at project kickoff.
 - **Did handing off the test work cause problems?** A small cost. My colleague needed time to learn the requirements, so test automation was two days late. I chose this on purpose, because testing was not on the critical path while the payment graph change was. I spent one hour on a requirement sync and shared wikis. E2E started on time, and we tested manually until automation caught up.
