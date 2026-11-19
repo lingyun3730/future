@@ -577,24 +577,82 @@ GET /v1/payments/{processorTransactionId}
 
 **重要度：⭐⭐**
 
-```text
-transaction                     （一个 processorTransactionId 一条，从 auth 开始）
-  processor_transaction_id, merchant_id, currency, authorized_amount,
-  captured_amount, refunded_amount, refund_pending_amount,
-  status, auth_expires_at,
-  bank_auth_reference, bank_capture_reference, created_at
+金额都用整数，最小货币单位（如 pence），和 API 一致。时间用 UTC。
 
-operation                       （每次 authorize / capture / refund 一条，同时承担幂等）
-  operation_id, processor_transaction_id, type, amount, currency,
-  status, bank_id, bank_reference, bank_idempotency_key,
-  merchant_id, idempotency_key, request_hash, response,
-  created_at, updated_at
-  UNIQUE (merchant_id, type, idempotency_key)
+**1. `transaction`**：一个 `processorTransactionId` 一行，从 authorization 开始。是**当前状态**，也是**加锁点**。
 
-webhook_outbox                  （仅异步结果的 webhook 事件）
-  event_id, merchant_id, processor_transaction_id, operation_id,
-  type, payload, status, attempts, next_attempt_at, created_at, sent_at
-```
+| 字段 | 说明 |
+| --- | --- |
+| `processor_transaction_id` (PK) | 我们生成，里面编有分片号 |
+| `merchant_id` | 商户 |
+| `currency` | 币种 |
+| `authorized_amount` | 授权金额 |
+| `captured_amount` | 已扣款金额 |
+| `refunded_amount` | 已退款金额（银行已确认） |
+| `refund_pending_amount` | 退款中（已预留，等银行结果） |
+| `status` | AUTHORIZING / AUTHORIZED / CAPTURING / CAPTURED / DECLINED / EXPIRED |
+| `auth_expires_at` | 授权过期时间，capture 时检查 |
+| `card_token`, `card_last4`, `card_brand` | 只存 vault 的 token、后四位、卡品牌，不存卡号 |
+| `bank_id` | 这笔交易使用的银行 |
+| `bank_auth_reference` | 银行授权引用，capture 时要带上 |
+| `bank_capture_reference` | 银行 capture 引用，refund 时要带上 |
+| `created_at`, `updated_at` | |
+
+索引：主键即可。商户级查询走读库，不在主库建 `merchant_id` 的大范围索引。
+
+**2. `operation`**：每次 authorize / capture / refund 一行。**记录"我们被要求做什么"，同时承担幂等。** PENDING 的行就是恢复任务。
+
+| 字段 | 说明 |
+| --- | --- |
+| `operation_id` (PK) | 我们生成；同时作为**银行幂等键** |
+| `processor_transaction_id` | 属于哪笔交易（逻辑外键，同一分片） |
+| `merchant_id` | |
+| `type` | AUTHORIZE / CAPTURE / REFUND |
+| `idempotency_key` | 商户传来的 `Idempotency-Key` |
+| `request_hash` | 规范化后的请求体的哈希，同 key 不同内容时拒绝 |
+| `amount`, `currency` | 本次金额 |
+| `status` | PENDING / UNKNOWN / SUCCESS / FAILED（原地条件更新） |
+| `bank_id` | 调用的银行 |
+| `bank_idempotency_key` | 发给银行的幂等键（等于 `operation_id`，重试不变） |
+| `bank_reference` | 银行返回的引用，用于查询和对账 |
+| `response` | 第一次返回给商户的响应，重复请求时原样返回 |
+| `error_code`, `retryable` | 失败原因，以及商户能否重试 |
+| `risk_decision` | ALLOW / DECLINE / UNSCORED（风控超时放行），重试时不重新评分 |
+| `reconciled_at` | 对账匹配成功的时间，空表示还没对上 |
+| `created_at`, `updated_at` | `updated_at` 用于恢复任务扫描"过久的 PENDING" |
+
+约束和索引：
+- `UNIQUE (merchant_id, type, idempotency_key)`：谁先插入谁赢，也是幂等的依据。
+- `(status, updated_at)`：恢复任务扫描 PENDING / UNKNOWN。
+- `bank_reference`：对账时按银行引用查找。
+
+**3. `webhook_outbox`**：仅在商户没拿到最终同步结果时才写。和最终状态**同一个事务**写入。
+
+| 字段 | 说明 |
+| --- | --- |
+| `event_id` (PK) | 商户用它去重 |
+| `merchant_id` | |
+| `processor_transaction_id`, `operation_id` | 关联 |
+| `type` | 事件类型，如 payment.authorized |
+| `payload` | 要发送的内容 |
+| `status` | PENDING / SENT / DEAD |
+| `attempts` | 已重试次数 |
+| `next_attempt_at` | 下次重试时间（指数退避加抖动） |
+| `created_at`, `sent_at` | |
+
+索引：`(status, next_attempt_at)`，webhook worker 按它扫描。
+
+**4. `operation_status_history`（可选，仅追加）**：每次状态变化插入一行，用于审计。
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` (PK) | |
+| `operation_id` | |
+| `from_status`, `to_status` | |
+| `reason` | 原因，如 timeout、bank_declined、recovered |
+| `at` | 变化时间 |
+
+**不在这四张表里的：** 商户信息、API key、限流配置属于商户配置服务；卡号在 vault；账务分录（ledger）不在本题范围。
 
 ### Tables in English
 
