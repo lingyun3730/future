@@ -22,8 +22,9 @@ Keywords: `BFX/SFX typo -> build EasyFin alone -> keep Excel, change submit plac
 Follow-up answers:
 - **How did you get Finance to use it?** I kept their habit: they still edit in Excel, they only submit to EasyFin instead of Google Drive and email. They also saw the benefit at once, because typos and invalid data were caught at submission. After launch, they file tickets and we add reasonable requests.
 - **Link to the Payment Graph story:** same idea, make it easy for others by lowering their cost.
-- **Why not ask a team to build it?** *(Not answered yet.)*
-- **Hardest part?** *(Not answered yet.)*
+- **Why not ask a team to build it?** It was not a formal PM requirement, so I could not assign the work to others, and waiting might mean it never started. It was a quiet period at the end of the year, so I could build a first version without affecting my regular projects. I also wanted to build a product from scratch. *(Not confirmed: that the team helped maintain it after the first version worked, and whether I demoed a prototype to Finance.)*
+- **Hardest part?** Not technical: understanding what Finance really needed and making the workflow easy to use. There was no PM, so I talked to Finance users directly and confirmed the workflow with them. Example: my first design made users check out the page to lock it and check in after submitting. Some forgot to check in, so nobody else could submit. After their feedback, I added a timeout so the page unlocks automatically. Technical core, only if asked: keep Excel and the database in sync (users mark changed rows, everything else must match, compare and validate before submit).
+- **Link:** a lock needs an expiry, because the holder may disappear (same idea as a lease).
 
 Careful:
 - Integration automated the handoff and SQL generation, not the approval. Engineers still review the SQL before staging. Do not say "the whole process is automated".
