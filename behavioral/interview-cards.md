@@ -4,20 +4,35 @@ One short card per project. Use it for "coding principles with example" and beha
 
 ## EasyFin
 
+Values: **Aspire** (main: initiative, beyond my scope), **Excel** (fail early, quality).
+
 | | |
 |---|---|
 | **Why** | A Finance user wrote SFX 1.3 instead of BFX 1.3 (seller vs. buyer journal type). It took several rounds to find. |
-| **My action** | On my own initiative, I built EasyFin alone: one web UI to submit, review, and approve changes. |
+| **My action** | On my own initiative, nobody asked me to, I built EasyFin alone: one web UI to submit, review, and approve changes. |
+| **Adoption** | Finance still edits in Excel. Only the place to submit changed: EasyFin instead of Google Drive and email. They had a reason to switch, because mistakes are caught at submission. After launch they file a ticket for new needs, and we add reasonable ones as enhancements. |
 | **Principle + example** | Fail early. Validate at submission, so a wrong journal type is caught right away. |
 | **Result** | All 60 Finance users use it. Apart from project meetings, no extra communication about requirements. |
 
-Keywords: `BFX/SFX typo -> build EasyFin -> validate at submit -> 60 users`
+Keywords: `BFX/SFX typo -> build EasyFin alone -> keep Excel, change submit place -> validate at submit -> tickets -> 60 users`
 
 90-second version:
-> Finance often sent requirements by Excel and email. Once, someone wrote SFX 1.3 instead of BFX 1.3, a seller journal type instead of a buyer one, and we needed several rounds to find it. I decided to fix it at the source. On my own initiative, I built EasyFin, a web tool where Finance submits and reviews changes. The key idea was to validate at submission, so an invalid journal type is caught immediately. Today all 60 Finance colleagues use it, and apart from project meetings, we have no extra communication about requirements.
+> Finance used to send requirements by Excel, Google Drive and email. Once, someone wrote SFX 1.3 instead of BFX 1.3, a seller journal type instead of a buyer one, and we needed several rounds to find it. Nobody asked me to fix the process, but I saw it would keep happening. So, on my own initiative, I built EasyFin, a web tool where Finance submits and reviews changes. The key idea was to validate at submission, so a wrong journal type is caught right away. I didn't ask Finance to change how they work. They still edit in Excel, and only the place to submit changed. After launch, they file a ticket for new needs, and we add reasonable ones. Today all 60 Finance colleagues use it, and apart from project meetings, we have no extra communication about requirements.
+
+Follow-up answers:
+- **How did you get Finance to use it?** I kept their habit: they still edit in Excel, they only submit to EasyFin instead of Google Drive and email. They also saw the benefit at once, because typos and invalid data were caught at submission. After launch, they file tickets and we add reasonable requests.
+- **Link to the Payment Graph story:** same idea, make it easy for others by lowering their cost.
+- **Why not ask a team to build it?** *(Not answered yet.)*
+- **Hardest part?** *(Not answered yet.)*
+
+Careful:
+- Integration automated the handoff and SQL generation, not the approval. Engineers still review the SQL before staging. Do not say "the whole process is automated".
+- After launch, say "we" for maintenance. The first version was built by me alone.
+- No numbers except 60 users. If asked for time saved, say we did not measure it.
+- I have no example of a specific ticket yet. Add one if I can recall it.
 
 Questions it can answer:
-- Behavioral: take initiative / improve a process / work with non-technical users.
+- Behavioral: take initiative / improve a process / work with non-technical users / get adoption.
 - Principle: fail early, make changes auditable.
 - Details if asked: five features (UI, history, recon, validation, integration), see `../project-coding-examples/easyfin-story.md`.
 
