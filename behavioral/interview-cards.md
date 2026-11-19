@@ -52,6 +52,10 @@ Keywords: `shared query function -> changed in place -> other app alerted -> rol
 90-second version:
 > In my first year at eBay, I was asked to enhance a database query function. It looked simple, so I modified the existing function directly instead of adding a new one. It worked for the new API, but I didn't check who else used it. After the release, another application that shared the function raised an alert. It turned out to be a false alert, but my change had caused it, and I was asked to write an RCA. We rolled back, then released again with a new function and the old one untouched. Since then, I always think about backward compatibility first. For shared code, I add a new function rather than change the old one, and I never change something I don't fully understand.
 
+Follow-up answers:
+- **Constructive criticism / how did you respond?** The clearest feedback came after this release. The RCA showed I should have checked who else used the function before changing it. I did not defend myself: it was my mistake. I rolled back, added a new function and kept the old one untouched. Then I changed my habit: before changing shared code, I check who uses it and prefer adding a new function. *(Confirm: the RCA review gave this feedback directly. Optional: I also ask for feedback early in code reviews, only if true.)*
+- If I have no personal criticism example, say so honestly and use this one. Do not blame others' motives or mention team politics.
+
 Notes:
 - Say "my mistake" clearly. Do not blame others.
 - I don't remember why exactly the alert fired. Say so honestly if asked; focus on the fix and the lesson.
@@ -59,7 +63,7 @@ Notes:
 
 ## Cross-team dependency: slow owner of the payment graph
 
-Use for: priority conflict between teams, working with other teams, influence without authority, taking ownership, a project at risk of delay.
+Use for: priority conflict between teams, working with other teams, influence without authority, taking ownership, a project at risk of delay, helping a colleague.
 Values: **Unite** (main), **Excel** (ownership, trade-off).
 If asked about a "disagreement", say it was a priority conflict, not a direct argument.
 
@@ -78,6 +82,7 @@ Keywords: `payment graph dependency -> 1:1 priority talk -> still slow after a s
 > I led the in-house Buyer FX project. Part of the change was in the payment graph, which another team owned. The engineer there had other projects, so FX was not his priority, and our deadline was at risk. First, I talked to him one-on-one and asked him to raise the priority. He agreed, but after a sprint, progress had not really changed. I realized the problem was not willingness, it was his time. So, with my manager's approval, I handed my test preparation to a colleague, and spent two days studying the code to work out exactly what to change. Then I met him again, and he confirmed the plan. He still made the change himself, but with a clear plan he finished in three days, and we completed development before E2E testing. What I learned is that asking is often not enough. If I make it easier for the other team to help, they can.
 
 Follow-up answers:
+- **Helping a colleague angle:** A colleague on another team was overloaded with his own projects, and our change was stuck waiting for him. I saw his problem was time, not willingness, so I spent two days studying the code and gave him a clear plan. He finished in three days, and it helped both of us. I also spent one hour syncing requirements with my own colleague who took over my test work. Start from his situation (overloaded), not from my deadline.
 - **Why not escalate?** Escalation is a last resort. His problem was lack of time, not refusal, so escalating would not give him more time, and it could hurt the relationship. I tried to remove the blocker myself first. If it was still blocked close to the deadline, I would raise it openly with my manager. *(Confirm this is how I would really act.)*
 - **What would you do differently?** Act earlier. I waited a full sprint before I saw nothing changed. Next time I would check in after a few days, go to the first conversation with a concrete plan, and align priorities with other teams at project kickoff.
 - **Did handing off the test work cause problems?** A small cost. My colleague needed time to learn the requirements, so test automation was two days late. I chose this on purpose, because testing was not on the critical path while the payment graph change was. I spent one hour on a requirement sync and shared wikis. E2E started on time, and we tested manually until automation caught up.
@@ -111,6 +116,59 @@ Notes:
 - Do not mix numbers: 25 currencies were not configured (payment flow); three components were upgraded (payment and refund).
 - Follow-up, what if the PM still insisted on skipping tests? Do not argue again with opinion. Put the risk in writing (what could break, impact on customers) and let the PM and my manager decide with the full picture. First try to cut the cost, e.g. test the highest-risk currencies first. *(Hypothetical answer, confirm it matches how I would act.)*
 - Follow-up, how did you raise the concern at the start without data? I had worked on the original Buyer FX project, so I knew where the weak points could be. I presented it as a risk to verify, not a conclusion: "It might be simple, but I think there is a risk. Let me run a quick test before we commit to the plan." *(Not confirmed: the exact experience behind the suspicion, and what I actually said to the PM.)*
+
+## Competing priorities: my usual way, plus Buyer FX
+
+Use for: juggling several projects or stakeholders, deciding what to do first, asking for help early.
+Values: **Excel** (main: ownership, judgment), **Unite** (communication).
+This is a pattern, not one event. Use the four steps, then one short example.
+
+Four steps:
+1. Decide what matters most: business impact, how fixed the deadline is, whether someone is blocked waiting for me.
+2. Try to solve it myself first: cut scope or deliver in phases.
+3. If two things are still urgent, go to my manager with a proposal, not just a problem: "I suggest I focus on A, move B to a colleague, and here is the risk."
+4. Tell the people waiting for the delayed item early, so there is no surprise.
+*(Confirm steps 2 and 4 are how I really work.)*
+
+90-second version:
+> This happens often, since we usually work on several projects at once. My approach has four steps. First, I decide what matters most, based on business impact, how fixed the deadline is, and whether someone is blocked waiting for me. Second, I try to solve it myself, for example by cutting scope or delivering in phases. Third, if two things are still urgent, I go to my manager with a proposal, not just a problem: I suggest I focus on A, move B to a colleague, and explain the risk. Fourth, I tell the people waiting for the delayed item early, so there is no surprise. For example, in the Buyer FX project, I had to unblock the payment graph change and prepare tests at the same time. The payment graph was on the critical path, and the tests were not yet. With my manager's approval, I handed the test preparation to a colleague and spent two days on the payment graph. Test automation was two days late, but we tested manually first, and E2E started on time.
+
+Follow-up answers:
+- **What if the manager cannot shift anything?** I report the bottleneck honestly to the project owner, do my best, and warn them early that the timeline may slip, so they can plan. I also offer alternatives such as phased delivery, and I'm clear about what can be delivered and when.
+- **How do you decide when two things look equally urgent?** I judge the real impact: how much leadership cares, and the benefit to the company or department. If it is still equal, I ask the stakeholders to decide, with the trade-offs explained.
+
+Notes:
+- Do not just say "I ask my manager". Bring a proposal.
+- The Buyer FX example is already used in other stories. Keep it to two sentences here.
+
+## Learning quickly: skills + MCP for repetitive tasks
+
+Use for: learning something new quickly, initiative, using new technology, improving productivity, sharing with the team, influencing others without authority.
+Values: **Aspire** (main), **Excel**. Full details: `../project-coding-examples/ai-workflow-story.md`.
+
+| | |
+|---|---|
+| **Situation** | Many Data Gateway tasks are about reports and webhooks: simple and repetitive. Each one needs the same steps: read Jira, write code and tests, run integration tests in a feature environment, open a PR. |
+| **Learning** | I taught myself to write skills and a local MCP server. I read the official skill documentation, and asked AI to help with much of the setup. I was the first in my team to do this. |
+| **Action** | Skills: coding style, test requirements, PR template. MCP: deploy to the feature environment, send test payloads, collect results. I improved the skills after each feature, until the flow was stable. |
+| **Result** | It rarely needs rework now. I only review at the end. When I shared the skills, teammates found them powerful, and they all use them now. *(No numbers on time saved.)* |
+| **Extension** | I also use AI workflow with MCP and skills for production triage: the MCP reads production error logs, the AI does a first analysis. If the error matches a known pattern, it is assigned to the right owner. If it is new, an email goes to the team. *(Confirm: who reviews the assignment, and whether it runs on a schedule or on demand.)* |
+| **Limit** | For vague requirements (e.g. a dynamic pricing design), AI gave a general design that looked right but did not fit our system. I make design decisions myself. |
+| **Lesson** | Remove ambiguity in instructions. If a person would find it unclear, the AI will too. |
+
+Keywords: `AI tools powerful -> repetitive Data Gateway tasks -> learn skill + MCP from docs -> first in team -> iterate -> review at the end -> limit: vague requirements`
+
+90-second version:
+> When AI tools became really powerful last year, I didn't just use them for vibe coding. I wanted to make them reliable for real work. Many of our Data Gateway tasks are about processing reports and webhooks. They are simple and repetitive, but each one needs the same steps: read the Jira ticket, write the code and tests, run integration tests in a feature environment, and open a PR. I taught myself to write skills and a local MCP server for this. The skills tell the AI our coding style, test requirements and PR template. The MCP connects to the feature environment to deploy code, send test payloads and collect results. I was the first in my team to do this. After a few features, I kept improving the skills, and it became stable, so now I only review the result at the end. My teammates found it powerful, and they all use it now. I also use MCP and skills for production triage: the AI reads the production error logs, does a first analysis, assigns known patterns to the right owner, and emails the team for new ones. I also learned where it doesn't work. With vague requirements, AI gives a general design that doesn't fit our system, so I remove ambiguity in my instructions and make the design decisions myself.
+
+Follow-up answers:
+- **How did you learn it?** I read the official skill documentation, and it was simple. I could even ask AI to help generate much of the setup. I started with one small skill for one type of task and grew from there.
+- **Influence without authority?** Nobody asked me to do it, and I had no authority over my teammates. I made it work on real features first, then shared it with the team in a meeting and put the skills and MCP server on GitHub, so anyone could set it up on their own. Using it was their choice. They saw it worked and saved effort, so they all use it now. Key idea: make it easy to try, and let the results speak.
+- **How do you know it is reliable?** Integration tests run in a real feature environment, the results go into the PR as they are, and I review the PR like any other code.
+
+Notes:
+- Production triage is real: describe it as above. Do not claim it fixes issues by itself. It only does first analysis and routing.
+- No numbers on time saved. Say "clearly less repetitive work, little rework".
 
 ## Why am I leaving / Why Checkout.com
 
