@@ -8,7 +8,7 @@
 
 核心思路：**原则是线，故事是点。** 先用一句话讲原则，再用一个真实例子撑住，然后把话头交给面试官，让他决定要不要深挖。不要一口气讲完整个故事。
 
-`[待补]` = 需要我补真实情况，不要编。详细故事在 `../behavioral/interview-cards.md`，测试和 CI/CD 的问答在 `testing-ci-observability-qa.md`。
+`[待补]` = 需要我补真实情况，不要编。详细故事在 `interview-cards.md`，测试和 CI/CD 的问答在 `testing-ci-observability-qa.md`。
 
 ---
 

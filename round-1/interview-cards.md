@@ -1,6 +1,6 @@
 # Interview Cards
 
-One short card per project. Use it for "coding principles with example" and behavioral questions. Full stories live in `../project-coding-examples/`.
+One short card per project. Use it for "coding principles with example" and behavioral questions. Full stories live in this folder.
 
 ## EasyFin
 
@@ -35,7 +35,7 @@ Careful:
 Questions it can answer:
 - Behavioral: take initiative / improve a process / work with non-technical users / get adoption.
 - Principle: fail early, make changes auditable.
-- Details if asked: five features (UI, history, recon, validation, integration), see `../project-coding-examples/easyfin-story.md`.
+- Details if asked: five features (UI, history, recon, validation, integration), see `easyfin-story.md`.
 
 ## Failure: changed a shared function
 
@@ -144,7 +144,7 @@ Notes:
 ## Learning quickly: skills + MCP for repetitive tasks
 
 Use for: learning something new quickly, initiative, using new technology, improving productivity, sharing with the team, influencing others without authority.
-Values: **Aspire** (main), **Excel**. Full details: `../project-coding-examples/ai-workflow-story.md`.
+Values: **Aspire** (main), **Excel**. Full details: `ai-workflow-story.md`.
 
 | | |
 |---|---|

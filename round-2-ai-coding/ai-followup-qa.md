@@ -1,7 +1,7 @@
 # AI Follow-up Q&A for Interviews
 
 用途：面试官聊到 AI 时可能追问的基础原理和真实使用。不会很深，所以每题只写：一句中文要点 + 简单英文回答。
-我的真实经历见 `../project-coding-examples/ai-workflow-story.md`（skills + MCP 自动化 Data Gateway 任务、production triage）。
+我的真实经历见 `../round-1/ai-workflow-story.md`（skills + MCP 自动化 Data Gateway 任务、production triage）。
 `[待补]` = 需要我自己补真实情况，不要编。
 
 ---
