@@ -183,15 +183,23 @@ Pattern link: this incident led to my insistence on E2E (payment, refund, protec
 | **Impact** | The protection pages limited the rate to 5 decimals, so they could not open, and buyers could not start a refund. The protection team noticed the alert and saw that our change caused it. |
 | **Action 1** | We rolled back to stop the page failures. |
 | **Complication** | A rollback was not a clean undo. Rates were already stored with 7 decimals. Write and read decimals are two separate configurations, so I set the read side back to 5, which cuts off the extra digits. |
-| **Action 2** | After the protection team fixed their side, we turned 7 on again. In that period buyers had seen rates at 5, and then saw 7 again, which could look inconsistent. The impact was small, but we took it seriously. So we hard-coded the affected time range to always read the rates at 5. |
+| **Action 2** | After the protection team fixed their side, we turned back to 7. Payments made in that period used 5 decimals but their refunds used 7, so the amounts were inconsistent and could cause reconciliation breaks. Recon is owned by another team; we told them the affected period in advance. The impact was small, but we took it seriously. So we hard-coded the affected time range to always read the rates at 5. |
 | **Duration** | The period between the rollback and turning 7 on again was two days. |
 | **Result / learning** | Since then I am careful with any decimal-place change. In the currency expansion project I ran E2E testing for the new exotic currencies, which might also need 7 decimals, covering the payment flow, refund and all protection flows. |
 | **Lesson** | Test every flow that uses the data, not only the main one. A rollback is not always a clean undo, so think about the data before the release. |
 
 Keywords: `5 to 7 decimals -> quick change -> only forward flow tested -> protection pages break -> rollback -> data already at 7 -> read at 5 -> hard-code time range -> E2E incl. refund later`
 
-2-minute version:
-> We had a requirement to increase the FX rate decimals from 5 to 7 for two currencies, VND and COP, because with 5 decimals the rate was too coarse to apply the markup. It looked simple, so I made the change in FXCenter quickly. But we only tested the forward payment flow, not the refund and protection flows. After release, the protection team alerted us. Their pages limited the rate to 5 decimals, so they could not open, and buyers could not start a refund. We found it was our change, and rolled back to stop it. But the rollback was not clean. The rates were already stored with 7 decimals, so we set the read side back to 5, which cuts off the extra digits. When the protection team fixed their side, we turned 7 on again. During that time, buyers had seen rates at 5 and then at 7, which could look inconsistent. The impact was small, but we still took it seriously, so we hard-coded the affected time range to always read the rates at 5. What I learned is to test every flow that uses the data, and to think about the data before I release, because a rollback is not always a clean undo. Later, in the currency expansion project, I ran E2E testing including refund and all the protection flows.
+2-minute version (spoken style):
+> One incident I learned a lot from was a decimal change I made in our FX service.
+>
+> For two currencies, VND and COP, a rate with 5 decimals was too rough to add our markup, so we needed 7 decimals. It looked like a small change, so I did it quickly. But I only tested the normal payment flow. I didn't test refund or buyer protection.
+>
+> After the release, the protection team told us their pages were failing. Those pages only accepted 5 decimals, so buyers couldn't open them and couldn't start a refund. We quickly saw that it was my change, so we rolled it back.
+>
+> The rollback wasn't clean, though. New rates were already saved with 7 decimals, so I kept the saved data and made the read side return only 5, cutting off the extra digits. Once the protection team fixed their side, we turned back to 7. But that created another problem: payments made during that period used 5 decimals, while their refunds used 7. So the refund amount could be different from the payment, and that could cause breaks in reconciliation. Reconciliation is owned by another team, so we told them in advance about the affected period, so they wouldn't be surprised. The impact was small, but I didn't want to ignore it, so we also fixed the read side to always return 5 decimals for that time period.
+>
+> My lesson was simple: before a change like this, list everyone who uses the data and test all those flows, not only the main one. And a rollback is not always a clean undo, so think about the data before the release. In the next project, the currency expansion, I tested payment, refund and all the protection flows end to end.
 
 Follow-up answers:
 - **Why did you test only the forward flow?** I treated it as a small precision change in our own service and did not list all the consumers of the rate. That was my mistake. Now I list every flow and consumer before a change like this.
