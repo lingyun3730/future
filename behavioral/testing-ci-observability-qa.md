@@ -24,10 +24,9 @@
 
 ### 3. How do you decide how much to test? Do you chase coverage?
 
-**要点：** 覆盖率是参考，不是目标。重点测关键逻辑、金额计算、状态转换、错误处理。高覆盖率也可能没测到真正重要的东西。
-`[待补：团队有没有覆盖率门槛。没有确认就不要说具体数字。]`
+**要点：** 我们的要求是单元测试覆盖率不低于 85%。但覆盖率只是底线，不是目标：重点测关键逻辑、金额计算、状态转换、错误处理。高覆盖率也可能没测到真正重要的东西。
 
-> Coverage is a signal, not a goal. I focus on the logic that matters: money calculations, state changes and error handling. High coverage can still miss the important cases, so I think about what could go wrong first.
+> Our standard is at least 85% unit test coverage. But I see that as a baseline, not the goal. I focus on the logic that matters: money calculations, state changes and error handling. High coverage can still miss the important cases, so I think about what could go wrong first.
 
 ### 4. How do you test a function that calls an external service?
 
@@ -74,22 +73,25 @@
 
 ### 9. What does your CI/CD pipeline do?
 
-**要点：** 提交代码后自动：编译、运行单元测试、静态检查和格式检查（spotless、PMD）、构建，再部署到测试环境跑集成测试。合并需要通过检查并经过 review。
-`[待补：CI 工具名、发布方式（如分批发布）、有没有自动回滚。不确定就不要说具体工具。]`
+**要点：** CI 用 Jenkins：编译、单元测试（覆盖率不低于 85%）、spotless 和 PMD 检查、构建。发布走内部的 CD 流水线（ECD），包含：CI build → 部署到 feature pool → 自动化测试 → 部署 staging → 部署 production。任何一步失败（测试或自动化测试），就**无法**继续部署到 staging 和 production。
 
-> On every change, the pipeline builds the code, runs the unit tests and static checks, like spotless for formatting and PMD for code quality. Then it deploys to a test environment, where integration tests run. A change can only be merged if the checks pass and someone has reviewed it.
+面试时：内部工具名（ECD、Velocity）可以不说，或说一次 "our internal deployment pipeline"。外部面试官不认识它们，说阶段更清楚。
+
+> We use Jenkins for CI: it builds the code, runs the unit tests with at least 85% coverage, and the static checks, spotless for formatting and PMD for code quality. Our deployment pipeline then runs in stages: CI build, deploy to a feature pool, automation tests, deploy to staging, and then production. If a test or an automation test fails, the change can't go to staging or production. So a broken change is blocked before it reaches users.
 
 ### 10. How do you release safely?
 
 **要点：** 小步发布、先在测试环境验证、能快速回滚、发布后看监控和告警。数据变化要提前想好，回滚不一定能完全撤销。
 
-> I release in small steps, verify in a test environment first, and watch the metrics and alerts after release. I make sure I can roll back quickly. And I think about data: a rollback is not always a clean undo. In the FX decimal change, we rolled back, but the rates were already stored with 7 decimals, so we had to handle the data too.
+**我们的流程：** 变更要依次通过 feature pool 的自动化测试、staging，才能上 production，任何一步失败都不能往下走。
+
+> Every change goes through the same stages: a feature pool with automation tests, then staging, then production, and a failure stops it from moving on. After release, I watch the metrics and alerts, and I make sure I can roll back quickly. And I think about data: a rollback is not always a clean undo. In the FX decimal change, we rolled back, but the rates were already stored with 7 decimals, so we had to handle the data too.
 
 ### 11. What would make a build or merge fail?
 
-**要点：** 编译错误、测试失败、格式检查（spotless）失败、静态检查（PMD）出现新问题。
+**要点：** 编译错误、测试失败、覆盖率低于 85%、格式检查（spotless）失败、静态检查（PMD）出现新问题。自动化测试失败也会阻止部署到 staging 和 production。
 
-> A compile error, a failing test, a formatting failure, or a new static-analysis issue. We keep the code clean, so any new issue has to be fixed before merge.
+> A compile error, a failing test, coverage under 85%, a formatting failure, or a new static-analysis issue. A failing automation test also blocks the deployment to staging and production, so any problem has to be fixed first.
 
 ### 12. How do you deal with a flaky test?
 
@@ -136,8 +138,8 @@
 | If they ask | Safe answer |
 | --- | --- |
 | "Which mocking library, how does `when().thenReturn()` work?" | "We use Mockito. I use it to replace a dependency and set its response. I'm happy to write it, but the key is what I choose to mock." |
-| "What's your coverage threshold?" | "We track coverage, but I care more about covering critical logic. `[待补：真实门槛]`" |
-| "Which CI tool?" | `[待补]`。不确定就说 "our internal pipeline", 再讲它做哪些检查。 |
+| "What's your coverage threshold?" | "At least 85%. I treat that as a baseline, and I care more about covering the critical logic." |
+| "Which CI tool?" | "Jenkins for CI, and an internal pipeline for deployment: feature pool, automation tests, staging, production." |
 | "Differences between mock, stub, spy?" | "A stub returns fixed data, a mock also lets me verify calls, and a spy wraps a real object. I mostly use mocks and stubs." |
 | "Testing pyramid?" | "Many unit tests, fewer integration tests, and a few E2E tests, because the higher the layer, the slower and more expensive." |
 | "Test-driven development?" | "I don't always write tests first, but I design for testability, and for bug fixes I write a failing test first." `[待补：只在真实时说]` |
