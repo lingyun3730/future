@@ -49,6 +49,40 @@
 
 另有一条用于 AI：**remove ambiguity**（如果人觉得不清楚，AI 也会）。
 
+### Story → principles (按故事反查：讲这个故事时，可以点哪几条原则)
+
+编号对应上面的 8 条原则。**主原则**是讲这个故事时优先点的；**可附带**是被追问或想串联时再用。
+
+| Story / project | 主原则 | 可附带 | 一句话（把故事挂在原则上） |
+| --- | --- | --- | --- |
+| **EasyFin** | 1 Fail early | 8 Right-size, 5 Backward compatible | "Validate at submission, so a wrong journal type is caught before review. And I kept Finance's Excel habit, with a simple page check-out for under 50 users." |
+| **TasCreed**（无限重试） | 2 Design for failure, 5 Fix at the root | 4 Safe to re-run | "Backoff limits the damage, a kill API lets people step in. I fixed the framework so every team benefited, and fixed file names make re-runs safe." |
+| **FXCenter**（本地缓存） | 3 Protect the downstream | 7 Observable, 2 Design for failure | "Lookups use a local cache, incomplete data falls back to the previous full set, no retry loop, and a metric plus alert makes it visible." |
+| **Buyer FX**（受控放量） | 6 Verify with evidence | 2 Safe failure | "Couldn't test every currency pair, so small live traffic went through first, and failed tokens were not restored automatically." |
+| **币种扩展**（25 个币种未配置） | 6 Verify with evidence, test every flow | 7 Observable (trace logs) | "Instead of arguing, I tested. 25 currencies were not configured, and the refund flow had the same problem." |
+| **FX 小数位事故**（5 → 7） | 6 Test every flow | 5 Backward compatible, 7 Observable (alert) | "Only the payment flow was tested, so the refund pages broke. A rollback isn't a clean undo, so I think about the data first." |
+| **共享函数事故** | 5 Backward compatible | 6 Verify | "Add a new function rather than change a shared one, and check who else calls it." |
+| **Payment Graph**（跨团队阻塞） | 6 Understand the whole flow, verify | 8 Right-size | "I studied the code myself and gave a concrete plan, so the other team's change was easy to make." |
+| **AI skills + MCP** | Remove ambiguity | 4 Safe to re-run (repeatable flow), 7 Observable (triage) | "If a person finds an instruction unclear, the AI will too. Narrow, repeatable tasks became stable." |
+
+### Principle → stories (反过来：被问某条原则时选哪个故事)
+
+| Principle | First choice | Second choice |
+| --- | --- | --- |
+| 1 Fail early | EasyFin | Currency expansion (test early) |
+| 2 Design for failure | TasCreed | Buyer FX (safe failure) |
+| 3 Protect the downstream | FXCenter | none |
+| 4 Safe to re-run | TasCreed | none |
+| 5 Fix at the root, backward compatible | TasCreed (root) / Shared function (compatibility) | FX decimals (rollback and data) |
+| 6 Verify with evidence, test every flow | Currency expansion | FX decimals, Buyer FX |
+| 7 Make it observable | FXCenter alert | AI triage |
+| 8 Keep it simple, right-size | EasyFin | none |
+
+**同一轮面试里的使用建议：**
+- 一个完整故事只讲一次。被问到别的原则时，换一个故事，或者用上表 "可附带" 里的一句话带过。
+- 最适合串联的一对：**FX 小数位事故 → 币种扩展**（同一条原则 6，先犯错、后改进）。
+- 原则 3、4、8 目前各只有一个故事，被问到时直接用它，不要硬凑第二个。
+
 ### Spoken versions (30 秒，面试官问某一条时用)
 
 **1. Fail early**
