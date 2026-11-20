@@ -170,6 +170,42 @@ Notes:
 - Production triage is real: describe it as above. Do not claim it fixes issues by itself. It only does first analysis and routing.
 - No numbers on time saved. Say "clearly less repetitive work, little rework".
 
+## Production incident: FX rate decimals 5 to 7 broke the refund pages
+
+Use for: production incident or bug, learning from a mistake, rollback, testing coverage, data consistency.
+Values: **Excel** (main: ownership, learning), **Unite** (worked with the protection team).
+Pattern link: this incident led to my insistence on E2E (payment, refund, protection) in the currency expansion story. Tell them as a sequence, not as two separate mistakes.
+
+| | |
+|---|---|
+| **Situation** | We needed more precision for two currencies, VND and COP: with 5 decimal places the rate was too coarse to apply the markup. The requirement was to increase the FX rate decimals from 5 to 7. |
+| **Mistake** | It looked simple, so I made the change in FXCenter quickly. We only tested the forward payment flow, not the refund and buyer protection flows. |
+| **Impact** | The protection pages limited the rate to 5 decimals, so they could not open, and buyers could not start a refund. The protection team noticed the alert and saw that our change caused it. |
+| **Action 1** | We rolled back to stop the page failures. |
+| **Complication** | A rollback was not a clean undo. Rates were already stored with 7 decimals. Write and read decimals are two separate configurations, so I set the read side back to 5, which cuts off the extra digits. |
+| **Action 2** | After the protection team fixed their side, we turned 7 on again. In that period buyers had seen rates at 5, and then saw 7 again, which could look inconsistent. The impact was small, but we took it seriously. So we hard-coded the affected time range to always read the rates at 5. |
+| **Duration** | The period between the rollback and turning 7 on again was two days. |
+| **Result / learning** | Since then I am careful with any decimal-place change. In the currency expansion project I ran E2E testing for the new exotic currencies, which might also need 7 decimals, covering the payment flow, refund and all protection flows. |
+| **Lesson** | Test every flow that uses the data, not only the main one. A rollback is not always a clean undo, so think about the data before the release. |
+
+Keywords: `5 to 7 decimals -> quick change -> only forward flow tested -> protection pages break -> rollback -> data already at 7 -> read at 5 -> hard-code time range -> E2E incl. refund later`
+
+2-minute version:
+> We had a requirement to increase the FX rate decimals from 5 to 7 for two currencies, VND and COP, because with 5 decimals the rate was too coarse to apply the markup. It looked simple, so I made the change in FXCenter quickly. But we only tested the forward payment flow, not the refund and protection flows. After release, the protection team alerted us. Their pages limited the rate to 5 decimals, so they could not open, and buyers could not start a refund. We found it was our change, and rolled back to stop it. But the rollback was not clean. The rates were already stored with 7 decimals, so we set the read side back to 5, which cuts off the extra digits. When the protection team fixed their side, we turned 7 on again. During that time, buyers had seen rates at 5 and then at 7, which could look inconsistent. The impact was small, but we still took it seriously, so we hard-coded the affected time range to always read the rates at 5. What I learned is to test every flow that uses the data, and to think about the data before I release, because a rollback is not always a clean undo. Later, in the currency expansion project, I ran E2E testing including refund and all the protection flows.
+
+Follow-up answers:
+- **Why did you test only the forward flow?** I treated it as a small precision change in our own service and did not list all the consumers of the rate. That was my mistake. Now I list every flow and consumer before a change like this.
+- **Why separate read and write settings?** *(Confirm the reason.)* It let me roll back the read side without losing the written data.
+- **Why cut off, not round?** The read configuration drops the extra digits. *(Confirm the exact behavior and its effect on the small inconsistency.)*
+- **What would you do differently?** List all consumers of the rate first, test refund and protection flows, release for a small set of traffic first, and ask the consuming team to confirm.
+- **Why hard-code the time range?** To keep what buyers saw consistent for the affected period. It is a pragmatic fix. *(Say honestly it is a workaround, if asked.)*
+- **How many buyers were affected?** *(Not confirmed. Say "a small number" only if true. Do not invent numbers.)*
+
+Notes:
+- Own it: "I made the change." Do not blame the protection team for their 5-decimal limit.
+- Not confirmed: how long until the alert and the rollback, how many buyers, and the exact rounding behavior.
+- This and the shared-function story are both about missed consumers. If asked, say what is different: here the test covered the main flow, but not the refund and protection flows, and the lesson was full flow coverage.
+
 ## Why am I leaving / Why Checkout.com
 
 **Why leaving** (one sentence, calm, no complaints):
