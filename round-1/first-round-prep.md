@@ -37,6 +37,11 @@
 **开场（30 秒）：**
 > I try to keep things simple and make them safe when something goes wrong. Three that I use a lot: fail early, design for failure, and test every flow that uses the data. Let me give an example of the last one, because I learned it the hard way.
 
+**提纲式开场（先说框架，再展开）：**
+> I think about it in four parts. First, keep it simple, so the code and the design fit the real need. Second, fail early and design for failure: validate input at the start, and assume dependencies can fail, so I add limits like backoff and a manual stop. Third, keep it safe to change: make operations safe to re-run, and don't break existing callers. Fourth, verify with evidence and make it observable: test every flow that uses the data, and add metrics and alerts so I know quickly when something goes wrong. I can give an example for any of these. Which one would you like to hear about?
+
+对应关系：①简单 = Right-size（EasyFin）；②= Fail early（EasyFin）+ Design for failure（TasCreed）；③= Safe to re-run（TasCreed）+ Backward compatible（共享函数）；④= Verify / Observable（FX 小数位、FXCenter）。说完把选择权交给面试官，他选哪个就讲哪个故事。如果他不选，你自己挑 ④ 的 FX 小数位事故。
+
 **然后展开一个故事**（推荐 FX 小数位事故，它真实、有教训、又能连到币种扩展）：
 > *(用 interview-cards.md 里的 FX decimals 口语版，讲到 lesson 就停。)*
 > That is why in the currency expansion project, I tested payment, refund and all the protection flows. Happy to talk about the other two as well, if you'd like.
