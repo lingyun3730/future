@@ -30,41 +30,57 @@
 - "What I learned from that was... and I applied it later in..."（把两个故事串起来，例如 FX 小数位事故 → 币种扩展的 E2E）
 - "I can go deeper on the design or on how I handled the incident, whichever you prefer."
 
+### Story allocation: one story, one question (先分配，避免撞车)
+
+面试官大概率把这几类问题分开问。每类用不同的故事，同一轮里不重复讲完整故事。
+
+| 面试官的问题 | 主故事 | 备注 |
+| --- | --- | --- |
+| "Which coding principles do you follow?" | 原则小故事：EasyFin（fail early）、TasCreed（failure、idempotency）、共享函数（backward compatible）、FXCenter | 每个只讲 20–30 秒，**不用 FX 小数位事故** |
+| "Most challenging project?" | **Buyer FX (in-house)** | 技术 + 业务 + 跨团队冲突（Payment Graph），可讲 5 分钟 |
+| "A production incident / bug?" | **FX 小数位事故** | 留给这个问题，讲完再接币种扩展 |
+| "A mistake / what you learned?" | 共享函数，或 FX 小数位（如果事故题没问到） | |
+| "Disagreement?" | 币种扩展（PM 认为简单） | |
+| "Unit test / CI/CD?" | testing-ci-observability-qa.md | |
+
 ### Q: "Which coding principles do you follow?"
 
-**步骤：** 1) 先用一句话说你的整体取向 → 2) 点 2–3 条名字（不要背 8 条）→ 3) 选 1 条展开讲故事 → 4) 把另外 1–2 条留给追问。
+**步骤：** 先用一个提纲说完整框架（20 秒）→ 让面试官选 → 他选哪条就用一个小故事（20–30 秒）→ 讲完停下。
 
-**开场（30 秒）：**
-> I try to keep things simple and make them safe when something goes wrong. Three that I use a lot: fail early, design for failure, and test every flow that uses the data. Let me give an example of the last one, because I learned it the hard way.
+**提纲式开场：**
+> I think about it in a few parts. First, **fail early**: validate input at the start. Second, **design for failure**: assume dependencies can fail, so I add limits like backoff and a manual stop, and I make operations safe to re-run. Third, **stay backward compatible**: don't break existing callers when I change shared code. And I keep things simple and observable. I can give an example for any of these. Which one would you like to hear about?
 
-**提纲式开场（先说框架，再展开）：**
-> I think about it in four parts. First, keep it simple, so the code and the design fit the real need. Second, fail early and design for failure: validate input at the start, and assume dependencies can fail, so I add limits like backoff and a manual stop. Third, keep it safe to change: make operations safe to re-run, and don't break existing callers. Fourth, verify with evidence and make it observable: test every flow that uses the data, and add metrics and alerts so I know quickly when something goes wrong. I can give an example for any of these. Which one would you like to hear about?
+**面试官选一条，用小故事（每个 20–30 秒，故事不是事故）：**
 
-对应关系：①简单 = Right-size（EasyFin）；②= Fail early（EasyFin）+ Design for failure（TasCreed）；③= Safe to re-run（TasCreed）+ Backward compatible（共享函数）；④= Verify / Observable（FX 小数位、FXCenter）。说完把选择权交给面试官，他选哪个就讲哪个故事。如果他不选，你自己挑 ④ 的 FX 小数位事故。
-
-**然后展开一个故事**（推荐 FX 小数位事故，它真实、有教训、又能连到币种扩展）：
-> *(用 interview-cards.md 里的 FX decimals 口语版，讲到 lesson 就停。)*
-> That is why in the currency expansion project, I tested payment, refund and all the protection flows. Happy to talk about the other two as well, if you'd like.
-
-**面试官选了你没展开的那一条，就切换：**
-
-| 面试官追问 | 切到 | 开场句 |
+| 面试官选 | 故事 | 开场句 |
 | --- | --- | --- |
-| "Fail early?" | EasyFin | "In EasyFin, a wrong journal type used to be found late, so I validated at submission." |
-| "Design for failure?" | TasCreed / Buyer FX | "In our scheduler, endless retries hurt a shared service, so I added backoff and a kill API." |
-| "Protect downstream?" | FXCenter | "Our rate lookups were about ten times Checkout traffic, so the client reads from a local cache." |
-| "Idempotent?" | TasCreed | "Tasks run at least once, so each shard writes a fixed file name and a re-run overwrites it." |
-| "Backward compatible?" | 共享函数事故 | "I once changed a shared function in place and it affected another app, so now I add a new one and leave the old one." |
+| Fail early | EasyFin | "In EasyFin, a wrong journal type used to be found late, so I validated at submission, before anyone reviews it." |
+| Design for failure | TasCreed | "In our scheduler, endless retries hurt a shared service, so I added exponential backoff and a kill API, so people can always step in." |
+| Idempotent / safe to re-run | TasCreed | "Tasks run at least once, so each shard writes a fixed file name and a re-run overwrites it." |
+| Backward compatible | 共享函数 | "I once changed a shared function in place and it set off an alert in another application. Now I add a new function and leave the old one untouched." |
+| Protect downstream | FXCenter | "Rate lookups were about ten times Checkout traffic, so the client reads from a local cache, and falls back to the previous full set if data is incomplete." |
+| Observable | FXCenter | "A completeness metric and a Grafana alert tell us quickly when the data is incomplete." |
+| Simple / right-size | EasyFin | "Under 50 users, so a simple page check-out for single-user editing, not real-time collaboration." |
+
+**"Test every flow / verify with evidence"** 不放在这里讲。如果面试官问到，用币种扩展（"tests showed 25 currencies were not configured"），FX 小数位事故留给事故题。
 
 **如果面试官说的是通用名词（SOLID、DRY、KISS、YAGNI）：**
 - 先用一句话承认并解释，不要背定义。例如 KISS："Keep it simple. I choose the simplest design that fits the real scale."
-- 然后接你的故事：KISS / YAGNI → EasyFin（Right-size）；单一职责 → 把一个大函数拆成几个小函数，每个只做一件事，更好测试（如有真实例子再用，没有就不要编）。
-- 不要只讲名词，一定接一个你的真实例子。
+- 然后接你的故事：KISS / YAGNI → EasyFin；单一职责没有真实例子就不要编。
 
 **避免：**
 - 一口气列 8 条，面试官会觉得在背。
 - 讲完故事不说 lesson。
-- 同一轮里把同一个故事讲两遍。
+- 在这一题里把事故故事讲成完整版（留给事故题）。
+
+### Q: "Most challenging project?" → Buyer FX
+
+三条线，一条条讲，每条一两句，等面试官追问：
+1. **Business / technical:** lower FX cost by trading directly with banks instead of processors. Hard part: couldn't create test orders for every currency pair, so a token-based traffic controller let a small amount of live traffic through (33 × 7 pairs in about a week).
+2. **Cross-team:** a critical part was in Payment Graph, and the owner was overloaded. I studied the code for 2 days, wrote a change plan, he confirmed in a 1:1, and finished in 3 days. E2E started on time.
+3. **My role:** tech lead, from design to production.
+
+可能的追问：traffic controller 的并发与原子性（见 `buyer-fx-story.md`，`[待确认]` 未补完）、为什么不按百分比放量、失败后的恢复、跨团队冲突怎么处理（Payment Graph 卡片）。不要说 exactly-once。
 
 ---
 
@@ -147,9 +163,9 @@
 
 ### If asked: "What coding principles do you follow?" (60 秒总答案)
 
-选 3 条，别全说：
+选 3 条，别全说，不用事故故事：
 
-> Three that I follow. First, **fail early**: in EasyFin, I validate at submission, so a wrong journal type is caught before anyone reviews it. Second, **design for failure**: in our task framework, I added backoff for endless retries and a kill API, so people can always step in. Third, **verify with evidence and test every flow**: in a currency expansion project, tests showed 25 currencies were not configured, and in an earlier FX decimal change, only testing the payment flow let a refund problem through. I'm happy to go deeper into any of these.
+> Three that I follow. First, **fail early**: in EasyFin, I validate at submission, so a wrong journal type is caught before anyone reviews it. Second, **design for failure**: in our task framework, I added backoff for endless retries and a kill API, so people can always step in. Third, **stay backward compatible**: when I need to change shared code, I add a new function and leave the old one, because I once broke another application by changing one in place. I'm happy to go deeper into any of these.
 
 ### Notes
 
@@ -170,7 +186,7 @@
 | | FXCenter caching | Protect the server from 10x traffic |
 | "How did you get a project done despite blockers" | Payment Graph | Blocked by another team's overloaded engineer, I did the investigation for him |
 | "A risk nobody else saw" | Currency expansion | Tested, found 25 currencies not configured |
-| "A project you led" | Buyer FX (in-house) | Tech lead from design to production |
+| "Most challenging project / a project you led" | Buyer FX (in-house) | Technical (traffic controller) + business (FX cost) + cross-team (Payment Graph). See the section above |
 
 ### Template for a technical difficulty (90 秒)
 
@@ -229,7 +245,8 @@
 
 | If they ask... | Story | Principle to name |
 | --- | --- | --- |
-| "What coding principles do you follow?" | The 3-principle answer above | Fail early, design for failure, verify with evidence |
+| "What coding principles do you follow?" | The 3-principle answer above | Fail early, design for failure, backward compatible |
+| "Most challenging project?" | Buyer FX (technical + business + cross-team) | Verify with evidence, lower their cost |
 | "Tell me about a hard technical problem" | Buyer FX controlled rollout | Verify with evidence, safe failure |
 | "How do you make a system reliable?" | TasCreed retries, FXCenter fallback | Design for failure, protect the downstream |
 | "How do you handle duplicates or re-runs?" | TasCreed fixed file names | Idempotent |
@@ -247,18 +264,18 @@
 ## 7. A sample conversation (how it flows)
 
 **Interviewer:** What coding principles do you follow?
-**Me:** Three: fail early, design for failure, and verify with evidence. [one example each, 20 seconds]. Happy to go deeper into any of them.
+**Me:** Fail early, design for failure, and stay backward compatible. [one 20-second example each, or let them pick]. Happy to go deeper into any of them.
 
-**Interviewer:** Tell me more about the last one.
-**Me:** In a currency expansion project, the PM thought E2E testing wasn't needed... [60-second version]. That came from an earlier incident, where an FX decimal change broke the refund pages, because we had only tested the payment flow.
+**Interviewer:** Tell me about the most challenging project you worked on.
+**Me:** The in-house Buyer FX project. [business goal, traffic controller, Payment Graph conflict.]
 
-**Interviewer:** What happened in that incident?
-**Me:** [60–90 second incident answer]
+**Interviewer:** Tell me about a production incident.
+**Me:** [FX decimals incident, 60–90 seconds, ending with the currency expansion E2E.]
 
 **Interviewer:** How do you test and release today?
 **Me:** [testing and CI/CD summary]
 
-注意这条线怎么自然串起来：原则 → 币种扩展 → FX 小数位事故 → 测试和发布流程。你不用背脚本，只要知道故事之间的连接点。
+注意这条线怎么自然串起来：原则（小故事）→ 最有挑战的项目（Buyer FX）→ 事故（FX 小数位）→ 测试和发布流程。每个问题用不同的故事，你不用背脚本，只要知道故事之间的连接点。
 
 ---
 
