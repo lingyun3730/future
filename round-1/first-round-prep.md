@@ -30,6 +30,37 @@
 - "What I learned from that was... and I applied it later in..."（把两个故事串起来，例如 FX 小数位事故 → 币种扩展的 E2E）
 - "I can go deeper on the design or on how I handled the incident, whichever you prefer."
 
+### Q: "Which coding principles do you follow?"
+
+**步骤：** 1) 先用一句话说你的整体取向 → 2) 点 2–3 条名字（不要背 8 条）→ 3) 选 1 条展开讲故事 → 4) 把另外 1–2 条留给追问。
+
+**开场（30 秒）：**
+> I try to keep things simple and make them safe when something goes wrong. Three that I use a lot: fail early, design for failure, and test every flow that uses the data. Let me give an example of the last one, because I learned it the hard way.
+
+**然后展开一个故事**（推荐 FX 小数位事故，它真实、有教训、又能连到币种扩展）：
+> *(用 interview-cards.md 里的 FX decimals 口语版，讲到 lesson 就停。)*
+> That is why in the currency expansion project, I tested payment, refund and all the protection flows. Happy to talk about the other two as well, if you'd like.
+
+**面试官选了你没展开的那一条，就切换：**
+
+| 面试官追问 | 切到 | 开场句 |
+| --- | --- | --- |
+| "Fail early?" | EasyFin | "In EasyFin, a wrong journal type used to be found late, so I validated at submission." |
+| "Design for failure?" | TasCreed / Buyer FX | "In our scheduler, endless retries hurt a shared service, so I added backoff and a kill API." |
+| "Protect downstream?" | FXCenter | "Our rate lookups were about ten times Checkout traffic, so the client reads from a local cache." |
+| "Idempotent?" | TasCreed | "Tasks run at least once, so each shard writes a fixed file name and a re-run overwrites it." |
+| "Backward compatible?" | 共享函数事故 | "I once changed a shared function in place and it affected another app, so now I add a new one and leave the old one." |
+
+**如果面试官说的是通用名词（SOLID、DRY、KISS、YAGNI）：**
+- 先用一句话承认并解释，不要背定义。例如 KISS："Keep it simple. I choose the simplest design that fits the real scale."
+- 然后接你的故事：KISS / YAGNI → EasyFin（Right-size）；单一职责 → 把一个大函数拆成几个小函数，每个只做一件事，更好测试（如有真实例子再用，没有就不要编）。
+- 不要只讲名词，一定接一个你的真实例子。
+
+**避免：**
+- 一口气列 8 条，面试官会觉得在背。
+- 讲完故事不说 lesson。
+- 同一轮里把同一个故事讲两遍。
+
 ---
 
 ## 2. Coding principles (with examples)
