@@ -13,6 +13,7 @@ Related files: `self-introduction.md` (intro), `mock-interview-round-1.md` (7 mo
 | Competing priorities | Competing priorities |
 | Learning quickly / influence without authority | Learning quickly: skills + MCP |
 | Production incident | Production incident: FX rate decimals 5 to 7 |
+| Goal beyond asked / kept improving / team result / incomplete info | More BQ questions: which story to use |
 | Why leaving / Why Checkout.com | Why am I leaving / Why Checkout.com |
 | Questions for the interviewer | Questions to ask the interviewer |
 
@@ -227,6 +228,23 @@ Notes:
 - Own it: "I made the change." Do not blame the protection team for their 5-decimal limit.
 - Not confirmed: how long until the alert and the rollback, how many buyers, and the exact rounding behavior.
 - This and the shared-function story are both about missed consumers. If asked, say what is different: here the test covered the main flow, but not the refund and protection flows, and the lesson was full flow coverage.
+
+## More BQ questions: which story to use
+
+Pick a different story for each question in the same round.
+
+| Question | Story | Spoken draft |
+| --- | --- | --- |
+| **A goal you set that went well beyond what was asked** | EasyFin | Nobody asked me to build EasyFin. I noticed Finance changes often went wrong because of typos, like mixing up BFX and SFX, and they led to many rounds of emails. So I set my own goal: make changes clear and checkable before an engineer sees them. I built it myself and kept Excel, so Finance didn't have to change habits. Now they submit through EasyFin, and around 60 people use it. |
+| **Something you kept improving after it was already good enough** | AI skills + MCP (alternate: EasyFin, check-out timeout added after forgotten check-ins) | My first skill already worked, but I kept improving it. I started with one small task, then added more steps: reading the Jira ticket, learning the event mapping, writing the code and the automation tests. After a few features it became stable. I shared it with the team and put it on GitHub, and everyone now uses it by their own choice. |
+| **A result you achieved as a team, and your part** | Buyer FX (alternate: currency expansion) | Together we brought Buyer FX in-house and finished the smoke test across 33 payment by 7 listing currencies in about a week. I was the tech lead. My part was working out what had to change, designing the controlled test with a traffic controller, and unblocking other teams. For example, the Payment Graph owner was overloaded, so I studied the code and wrote the change plan, and he finished it in 3 days. |
+| **A decision with incomplete information** | Buyer FX traffic controller (alternate: currency expansion) | We couldn't create test orders for every currency pair, so I couldn't know in advance that each one would work. I decided not to guess. I used a token-based traffic controller to let a small amount of live traffic through the new path. If a transaction failed, the token wasn't restored automatically, and a person checked it first. I preferred under-testing to sending too much traffic. |
+
+Notes:
+- Use "we" for the result and "I" for my own part. Don't claim all of the traffic controller code.
+- Not confirmed: time saved by the AI workflow (no numbers), and the exact number of EasyFin users (60 vs under 50).
+- Buyer FX is used twice here. If both questions come up, use currency expansion for the decision question (PM thought it was simple, I tested in staging, 25 currencies were not configured).
+- Don't say EasyFin automates the whole process. The handoff and SQL generation are automated, and engineers still approve.
 
 ## Why am I leaving / Why Checkout.com
 
