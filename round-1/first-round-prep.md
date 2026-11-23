@@ -8,7 +8,7 @@
 
 核心思路：**原则是线，故事是点。** 先用一句话讲原则，再用一个真实例子撑住，然后把话头交给面试官，让他决定要不要深挖。不要一口气讲完整个故事。
 
-`[待补]` = 需要我补真实情况，不要编。详细故事在 `interview-cards.md`，测试和 CI/CD 的问答在 `testing-ci-observability-qa.md`。
+`[待补]` = 需要我补真实情况，不要编。详细故事在 `bq.md`，测试和 CI/CD 的问答在 `testing-ci-observability-qa.md`。
 
 ---
 
@@ -218,7 +218,7 @@
 > We increased the FX rate decimals from 5 to 7 for VND and COP, because the precision was too low to apply the markup. It looked simple, so I changed FXCenter quickly. But we only tested the payment flow. The buyer protection pages limited the rate to 5 decimals, so they couldn't open, and buyers couldn't start a refund. The protection team alerted us. We rolled back. But the rates were already stored with 7 decimals, so we set the read side back to 5. When the protection team fixed their side, we turned 7 back on, and hard-coded the affected time range to keep the rates buyers saw consistent. Since then I test refund and protection flows for any decimal change, and I did that in the currency expansion project.
 
 - 要点：认错（"I made the change"），回滚不是干净的撤销，预防措施是具体的（测所有流程），并连接到币种扩展。
-- 追问（读写配置为何分开、为何截断不取整、多少买家）见 `interview-cards.md` 的卡片，里面有 `[待补]`。
+- 追问（读写配置为何分开、为何截断不取整、多少买家）见 `bq.md` 的卡片，里面有 `[待补]`。
 
 ### Smaller example: shared function
 

@@ -5,7 +5,7 @@ Format for each question: **My answer** (as I said it, unedited), then **Revised
 Rules for the revised answers:
 - Only facts I confirmed. `[TODO]` means a fact I still need to fill in. Never invent it.
 - Say "Checkout.com", not "CKO", in the interview.
-- Story cards with more detail: `interview-cards.md`.
+- Story cards with more detail: `bq.md`.
 
 ---
 

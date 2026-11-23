@@ -5,8 +5,8 @@ Start here: `first-round-prep.md`
 | Topic | File |
 | --- | --- |
 | Overview, 8 principles, story ↔ principle map | `first-round-prep.md` |
-| Story cards (90-second versions, follow-ups) | `interview-cards.md` |
-| Production incident (FX decimals 5→7) | `interview-cards.md` |
+| Story cards (90-second versions, follow-ups) | `bq.md` |
+| Production incident (FX decimals 5→7) | `bq.md` |
 | Unit test, CI/CD, observability | `testing-ci-observability-qa.md` |
 | Mock Q&A | `mock-interview-round-1.md` |
 | Self-introduction | `self-introduction.md` |
