@@ -1,6 +1,20 @@
-# Interview Cards
+# BQ (Behavioral Questions)
 
-One short card per project. Use it for "coding principles with example" and behavioral questions. Full stories live in this folder.
+All behavioral story cards are in this file. One card per story, with a 90-second version and follow-up answers.
+
+Related files: `self-introduction.md` (intro), `mock-interview-round-1.md` (7 mock Q&As with revised answers), `first-round-prep.md` (coding principles, which story for which question).
+
+| Question type | Card in this file |
+| --- | --- |
+| Improved something unasked / initiative | EasyFin; Fix it at the root (TasCreed) |
+| Mistake / failure | Failure: changed a shared function |
+| Blocked by another team / tight deadline | Cross-team dependency: Payment Graph |
+| Disagreement | Disagreement: currency expansion |
+| Competing priorities | Competing priorities |
+| Learning quickly / influence without authority | Learning quickly: skills + MCP |
+| Production incident | Production incident: FX rate decimals 5 to 7 |
+| Why leaving / Why Checkout.com | Why am I leaving / Why Checkout.com |
+| Questions for the interviewer | Questions to ask the interviewer |
 
 ## EasyFin
 
