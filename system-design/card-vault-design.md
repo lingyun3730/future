@@ -103,6 +103,57 @@
 
 关键决定：**卡号从不经过 Payment Service。** 好处：只有两个小组件要通过 PCI 审计。代价：每次调银行多一次 vault 调用。
 
+### 2.4 Bank Adapter：它做什么，怎么调银行
+
+**一句话：** Payment Service 只说"对这个 token 扣 10 英镑"，Bank Adapter 负责把它变成银行能懂的请求，发出去，再把银行的回复翻译回来。
+
+**为什么需要它（而不是 Payment Service 直接调银行）：**
+1. **隔离卡号**：只有它需要卡号，Payment Service 不用进 PCI 范围。
+2. **隔离银行差异**：不同银行、不同卡组织的协议、字段、错误码都不一样。差异都收在 adapter 里，Payment Service 只面对一套统一接口。加一家银行只加一个 adapter 实现。
+
+**Payment Service 怎么调它（内部同步接口）：**
+
+```text
+POST /internal/bank/authorize
+{ operation_id, card_token, amount, currency, merchant_id }
+```
+
+`operation_id` 就是第 4 章先落库的那条 PENDING 记录的 id，同时作为**发给银行的幂等引用**。
+
+**它收到后做的 7 件事：**
+
+```text
+ Payment Service ──(1) operation_id + card_token + 金额──▶ [Bank Adapter]
+                                                              │
+   (2) token ──▶ [Card Vault] ──▶ 卡号（mTLS，有审计）           │
+                                                              │
+   (3) 按银行格式组装请求（卡号、金额、币种、operation_id 作为银行侧的引用）
+   (4) 通过加密连接（TLS，部分银行要 mTLS 或专线）发给 [Bank]，设超时
+   (5) 立刻清除内存里的卡号
+   (6) 把银行回复翻译成统一结果：APPROVED / DECLINED / UNKNOWN
+   (7) 返回给 Payment Service，由 Payment Service 更新状态
+```
+
+**关键规则：**
+
+| 规则 | 原因 |
+| --- | --- |
+| Adapter **无状态，不写支付状态** | 状态只由 Payment Service 条件更新，避免两处写 |
+| 发银行时带 `operation_id` 作幂等引用 | 重试或恢复时银行能识别是同一笔，不会扣两次 |
+| 超时、连接断开返回 **UNKNOWN，不是 FAILED** | 不知道银行有没有扣，状态保持 PENDING，交给恢复 worker 查询 |
+| 银行明确拒绝（余额不足等）返回 DECLINED，并映射成统一的错误码 | 商户只看到一套错误码，不暴露银行细节 |
+| 每家银行单独的超时、熔断、限流 | 一家银行慢，不拖垮其他银行 |
+| 卡号只放在局部变量，用完清零，不写日志、不缓存 | 缩小泄露面 |
+| 重试用同一个 `operation_id`，每次都向 vault 重新换卡号 | 不在 adapter 里保存卡号 |
+
+**UNKNOWN 之后怎么办：**
+恢复 worker 用同一个 `operation_id` 调银行的查询接口（或重发同一个请求，由银行幂等返回原结果），确认后再更新状态。对账是最后的兜底。
+
+**面试说法：**
+"Payment Service never sees the card number. It sends the Bank Adapter an operation id and a card token. The adapter exchanges the token with the vault, builds the bank-specific request using the operation id as the idempotency reference, calls the bank with a timeout, wipes the card number from memory, and returns a normalized result: approved, declined, or unknown. A timeout is 'unknown', not 'failed', so the recovery worker confirms it later with the same reference."
+
+> [TODO] 真实银行的协议（ISO 8583、HTTP API 等）和是否支持幂等引用，要以实际银行为准。面试时说 "depends on the bank; if it has no idempotency support, I'd rely on a query by our reference before any retry"。
+
 ## 3. Card Vault 详细设计
 
 ### 3.1 API
