@@ -26,12 +26,74 @@
 
 ## 2. 总体架构
 
+**怎么读：** 先看 2.1 的"有哪些角色"，再按 2.2 的三个步骤从上往下看。每一步只画一条流程，箭头上写的是**传了什么**。
+
+### 2.1 角色（先认人）
+
 ```text
-Browser (hosted fields) ──card number──> Card Vault ──token──> Browser
-Merchant server ──token + amount + idempotency key──> API Gateway ──> Payment Service ──> DB
-                                                                     │
-                                                                     └──> Bank Adapter ──token──> Card Vault (detokenize) ──card number──> Bank
+[Browser]          用户的浏览器，页面里嵌着 vault 提供的输入框（hosted fields）
+[Merchant Server]  商户自己的后端
+[API Gateway]      我们的入口：认证、限流
+[Payment Service]  我们的支付核心：幂等、状态机、写 DB（**不碰卡号**）
+[Bank Adapter]     调银行的适配层
+[Card Vault]       卡号保险库：加密存卡号，发 token（**唯一存卡号的地方**）
+[Bank]             银行 / 卡组织
 ```
+
+### 2.2 三步流程
+
+**步骤 1：收卡。卡号只走浏览器到 vault 这一条路**
+
+```text
+ [Browser]
+    │  (1) 用户输入卡号。卡号 ──────────────▶ [Card Vault]   加密保存卡号
+    │                                              │
+    │  (2) 返回 token  ◀───────────────────────────┘
+    ▼
+ [Browser] 拿到 token，把 token 交给商户页面
+
+ 商户服务器全程看不到卡号。
+```
+
+**步骤 2：发起支付。只传 token，不传卡号**
+
+```text
+ [Merchant Server]
+    │  (3) token + 金额 + 幂等键
+    ▼
+ [API Gateway]            认证、限流
+    │
+    ▼
+ [Payment Service]        幂等检查 -> 写 DB（只存 token、last4、brand、状态）
+    │
+    ▼
+ [Bank Adapter]           准备调银行
+```
+
+**步骤 3：调银行。卡号只在这一步短暂出现**
+
+```text
+ [Bank Adapter]
+    │  (4) token ───────────────▶ [Card Vault]   检查权限 + 写审计日志
+    │                                   │
+    │  (5) 卡号 ◀───────────────────────┘        (内部 mTLS，只有 Bank Adapter 能调)
+    │
+    │  (6) 卡号 ─────────────────▶ [Bank]
+    │
+    │  (7) 用完立刻从内存清除卡号
+    ▼
+ [Bank Adapter] 把结果交给 Payment Service 更新状态
+```
+
+### 2.3 一眼看懂：谁能看到什么
+
+| 角色 | 完整卡号 | token | last4 / brand |
+| --- | --- | --- | --- |
+| Browser（输入时） | 是（只输入，不保存） | 是 | - |
+| Merchant Server | **否** | 是 | 是 |
+| API Gateway / Payment Service / DB / 日志 | **否** | 是 | 是 |
+| Bank Adapter | 仅调银行那一刻，用完即丢 | 是 | 是 |
+| Card Vault | 是（加密保存） | 是 | 是 |
 
 | 组件 | 职责 | 在 PCI 范围内？ |
 | --- | --- | --- |
