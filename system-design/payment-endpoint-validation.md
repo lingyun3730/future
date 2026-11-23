@@ -5,6 +5,30 @@
 
 说明：通用做法，不是你们公司的实际设计。
 
+## 0. 先和面试官沟通：可以问的问题
+
+开头问 3–5 个，每个带"我的默认假设"，对方不回答也能往下走。每个问题要说明"它会影响我的设计"。
+
+开场：`"Before I start, I'd like to clarify a few things so I design the right thing."`
+
+| # | 问题 | English | 默认假设 | 影响什么设计 |
+| --- | --- | --- | --- | --- |
+| 1 | 请求有多个错误时，要一次全部返回吗？ | If the request has several problems, should I return all of them at once? | 全部返回 | 校验器收集错误，不 fail-first |
+| 2 | 银行模拟器超时，应该返回什么？ | What should I return if the bank simulator times out? | 既不是 Declined 也不是 Rejected，返回 Pending/504 | 状态和错误处理 |
+| 3 | 哪些检查你希望放在 gateway，哪些留给银行？ | Which checks do you expect in the gateway, e.g. Luhn and expiry, and which should be left to the bank? | Gateway 查格式和范围，银行查余额等 | 校验范围 |
+| 4 | 调用方会重试吗？要支持幂等键吗？ | Can the caller retry? Should I support an idempotency key? | 先支持，范围内只做最小版 | 是否要存请求、返回原结果 |
+| 5 | 要持久化支付记录，还是内存即可？ | Should I persist payments, or is in-memory fine for now? | 内存即可，说明生产要落库 | 代码范围 |
+
+可选的追问（时间够再问）：
+- 金额的单位和币种怎么传？（我假设最小货币单位的整数、ISO 4217）
+- 卡号可以直接出现在请求里吗，还是只收 token？（练习里假设请求里有卡号，但绝不记日志、不返回）
+- 支持哪些币种和卡品牌？
+- Rejected 用 400 还是 422？响应格式有没有要求？
+- 要写测试吗？有没有技术栈限制？
+
+说完假设再动手：
+`"I'll assume amounts are integers in minor units, currencies are ISO codes, I never log or return the full card number, and I'll leave 3DS and fraud out. Does this match what you had in mind?"`
+
 ## 1. 一句话答案
 
 - **Gateway 查"这个请求本身合不合格"**：格式、必填、范围，不需要查任何外部信息，几毫秒就能判断，错了就不调银行（Rejected）。
