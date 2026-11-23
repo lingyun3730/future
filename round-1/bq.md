@@ -13,6 +13,8 @@ Related files: `self-introduction.md` (intro), `mock-interview-round-1.md` (7 mo
 | Competing priorities | Competing priorities |
 | Learning quickly / influence without authority | Learning quickly: skills + MCP |
 | Production incident | Production incident: FX rate decimals 5 to 7 |
+| Project background (1-2 sentences per project) | Project background |
+| Goal beyond asked / kept improving / team result / incomplete info | More BQ questions: which story to use |
 | Why leaving / Why Checkout.com | Why am I leaving / Why Checkout.com |
 | Questions for the interviewer | Questions to ask the interviewer |
 
@@ -227,6 +229,42 @@ Notes:
 - Own it: "I made the change." Do not blame the protection team for their 5-decimal limit.
 - Not confirmed: how long until the alert and the rollback, how many buyers, and the exact rounding behavior.
 - This and the shared-function story are both about missed consumers. If asked, say what is different: here the test covered the main flow, but not the refund and protection flows, and the lesson was full flow coverage.
+
+## Project background (say 1-2 sentences first)
+
+Start every story with the background, so the interviewer is not lost. Keep it to 10 seconds, then go to the story.
+
+| Project | Background in plain English |
+| --- | --- |
+| **Buyer FX (in-house)** | At eBay, buyers pay in their own currency. We used to rely on payment processors for the currency conversion. This project brought it in-house, trading directly with banks, to lower the FX cost. I was the tech lead. |
+| **Currency expansion** | After Buyer FX was in-house, we expanded it to more countries and currencies, so more buyers could pay in their own currency. |
+| **EasyFin** | In our accounting system, the rules for how business events become journal entries are stored as configuration data. Finance owns the rules, and they used to send Excel changes to engineers by email. EasyFin is the tool I built to submit, check and approve those changes. |
+| **TasCreed** | An internal task framework that runs our daily financial reports as scheduled jobs split into shards. |
+| **FXCenter** | The internal service that provides FX rates to other systems, such as checkout and item pages. |
+| **Payment Graph** | A core payment component owned by another team, which Buyer FX needed to change. |
+| **AI skills + MCP** | Our data gateway team handles reports and webhook events. Many tasks were simple and repetitive, so I automated them with AI skills and an MCP server. |
+
+Notes:
+- Don't use internal names (FMM, RMM, ECD) in the background. Say "payment flow", "refund flow".
+- Say "more countries and currencies" for the expansion. The count (42 countries or currencies) is not decided yet.
+- Payment Graph: describe it only as much as I am sure of. Add what it does, if I want to explain more. *[TODO]*
+
+## More BQ questions: which story to use
+
+Pick a different story for each question in the same round.
+
+| Question | Story | Spoken draft |
+| --- | --- | --- |
+| **A goal you set that went well beyond what was asked** | EasyFin | *Background: Finance's accounting rule changes used to go by Excel and email to engineers.* Nobody asked me to build EasyFin. I noticed Finance changes often went wrong because of typos, like mixing up BFX and SFX, and they led to many rounds of emails. So I set my own goal: make changes clear and checkable before an engineer sees them. I built it myself and kept Excel, so Finance didn't have to change habits. Now they submit through EasyFin, and around 60 people use it. |
+| **Something you kept improving after it was already good enough** | AI skills + MCP (alternate: EasyFin, check-out timeout added after forgotten check-ins) | *Background: our data gateway handles reports and webhook events, and many of those tasks are simple and repetitive.* My first skill already worked, but I kept improving it. I started with one small task, then added more steps: reading the Jira ticket, learning the event mapping, writing the code and the automation tests. After a few features it became stable. I shared it with the team and put it on GitHub, and everyone now uses it by their own choice. |
+| **A result you achieved as a team, and your part** | Buyer FX (alternate: currency expansion) | *Background: at eBay we used payment processors for currency conversion, and this project brought it in-house to lower the FX cost.* Together we brought Buyer FX in-house and finished the smoke test across 33 payment by 7 listing currencies in about a week. I was the tech lead. My part was working out what had to change, designing the controlled test with a traffic controller, and unblocking other teams. For example, the Payment Graph owner was overloaded, so I studied the code and wrote the change plan, and he finished it in 3 days. |
+| **A decision with incomplete information** | Currency expansion (alternate: Buyer FX traffic controller) | *Background: after Buyer FX went in-house, we expanded it to more countries and currencies.* When we expanded, I didn't know if every component would accept the new currencies. The PM assumed it was simple, and I didn't have proof either way. I decided not to guess, and not to argue either. I spent a little time running payments with the new currencies in staging. The trace logs showed that 25 currencies were not configured, and the refund flow had the same problem. With that evidence, the PM agreed to more testing. It took two weeks and three components were upgraded. What I learned: when I lack information, I find the cheapest way to get evidence before I commit to a plan. |
+
+Notes:
+- Use "we" for the result and "I" for my own part. Don't claim all of the traffic controller code.
+- Not confirmed: time saved by the AI workflow (no numbers), and the exact number of EasyFin users (60 vs under 50).
+- Buyer FX is used for the team result question, so the decision question uses currency expansion. If currency expansion was already used for the disagreement question, switch to the Buyer FX traffic controller (could not create test orders for every pair, so a small amount of live traffic with tokens).
+- Don't say EasyFin automates the whole process. The handoff and SQL generation are automated, and engineers still approve.
 
 ## Why am I leaving / Why Checkout.com
 
