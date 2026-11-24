@@ -252,7 +252,7 @@ public class PaymentController {
 - `BankClient` 是接口，测试时换成 mock，可以覆盖 approved、declined、timeout。
 - 金额用 `long` 最小单位，不用 `double`。
 - 日志里只记 `payment_id` 和 last4。
-- 这版省略了：幂等存储、落库、真正的卡号类型（见 `card-vault-design.md` 的 `CardNumber`）。要说出来，不要假装没有。
+- 这版省略了：幂等存储、落库、真正的卡号类型（见 `payment-gateway-card-vault-design.md` 的 `CardNumber`）。要说出来，不要假装没有。
 
 ## 7. 测试清单
 
