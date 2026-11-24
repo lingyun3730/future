@@ -252,7 +252,7 @@ public class PaymentController {
 - `BankClient` 是接口，测试时换成 mock，可以覆盖 approved、declined、timeout。
 - 金额用 `long` 最小单位，不用 `double`。
 - 日志里只记 `payment_id` 和 last4。
-- 这版省略了：幂等存储、落库、真正的卡号类型（见 `card-vault-design.md` 的 `CardNumber`）。要说出来，不要假装没有。
+- 这版省略了：幂等存储、落库、真正的卡号类型（见 `payment-gateway-card-vault-design.md` 的 `CardNumber`）。要说出来，不要假装没有。
 
 ## 7. 测试清单
 
@@ -399,3 +399,221 @@ Prompt: POST /payments returning 422 with {status, errors} for Rejected, 200 for
 ### 10.5 英文口述
 
 "I'll build this from the inside out. First the data types, then the validator, which is pure logic, so I can test it thoroughly. Then a bank client interface with a fake, so I can count calls. Then the service that wires them together, and finally the controller. At each step I give the AI one small task with clear rules, review the result, and write tests before moving on. The most important test is that an invalid request is rejected with all its errors and the bank is called zero times."
+
+## 11. 安全追问：讲清楚原理（面试官最爱问）
+
+### 11.1 Gateway 怎么知道是哪个商户在调用？（认证 Authentication）
+
+**认证 = 你是谁。授权 = 你能不能碰这个资源。** 两步，顺序不能反。
+
+**谁生成 API key？我们（平台）生成，不是商户。**
+商户在 Dashboard 点"创建 key"，我们的服务做三件事：
+
+```text
+ 1. 生成随机 key：  sk_live_ + 32 字节随机数（安全随机数生成器），例如 sk_live_9fA3k...
+ 2. 算哈希：        key_hash = SHA-256(完整的 key)
+ 3. 存库：          api_keys 表：key_hash, merchant_id, 状态, 创建时间, 过期时间
+                    **只存哈希，不存 key 本身**
+ 4. 把 key 明文只显示一次给商户，之后我们自己也找不回来
+```
+
+**收到请求时怎么"算哈希"？同样的算法再算一遍，再查表：**
+
+```text
+ 商户请求头：Authorization: Bearer sk_live_9fA3k...
+ Gateway：
+   1. 取出 key
+   2. h = SHA-256(key)              <- 和注册时同一个算法
+   3. SELECT merchant_id FROM api_keys WHERE key_hash = h AND 状态 = 有效
+   4. 没有结果 -> 401
+      有结果   -> 得到 merchant_id，放进请求上下文
+```
+
+为什么能行：哈希是单向的，同一个输入永远得到同一个哈希。我们不需要知道 key 是什么，只需要比较"这次算出来的哈希"和"库里存的哈希"是否相同。
+
+为什么存哈希而不是明文：数据库泄露时，攻击者只拿到哈希，反推不出 key，没法冒充商户（和密码的道理一样）。
+
+**为什么 API key 用普通 SHA-256 就行，密码却要 bcrypt？**
+- 密码是人想的，熵低，攻击者可以穷举，所以要用故意很慢的算法（bcrypt）。
+- API key 是 32 字节随机数，熵极高，穷举不可能，所以快速的 SHA-256 就够，而且每个请求都要算，快才好。
+
+要点：
+
+| 做法 | 原因 |
+| --- | --- |
+| `merchant_id` 来自**认证结果**（查表得到），**不来自请求体或 URL** | 否则商户可以随便填别人的 id |
+| key 带前缀 `sk_live_` / `sk_test_` | 一眼分清环境，泄露后容易扫描发现 |
+| 支持轮换（新旧 key 同时有效一段时间） | key 泄露时可以换，又不停服务 |
+| 限流 | 防暴力猜 key |
+
+更强的方式（被问到再说）：OAuth2 client credentials（短期 token）、mTLS、请求签名（HMAC）。**API key 是起点，简单够用（KISS）。**
+
+### 11.2 商户 A 怎么读不到商户 B 的支付？（授权 Authorization，防 IDOR）
+
+先澄清一个容易混淆的点：**哈希只用在 `api_keys` 表里，保护 API key。`payments` 表里的 `merchant_id` 是普通明文列。** 两个不同的东西：
+
+```text
+ api_keys 表：  key_hash（哈希） -> merchant_id     用来"认出你是谁"
+ payments 表：  payment_id, merchant_id（明文）, amount, status...
+```
+
+**完整链路：**
+
+```text
+ 请求：GET /payments/pay_123      Authorization: Bearer sk_live_...
+   1. 认证：key -> SHA-256 -> 查 api_keys -> merchant_id = "M_A"    （这里用哈希）
+   2. 授权：SELECT * FROM payments
+            WHERE payment_id = 'pay_123' AND merchant_id = 'M_A'      （这里用明文 merchant_id）
+   3. 没有结果 -> 404
+```
+
+**IDOR（Insecure Direct Object Reference）：** 只按 id 查，不检查归属。
+
+```text
+ 错误：  WHERE payment_id = 'pay_123'
+         商户 A 猜到 B 的 pay_123，就能读到。
+
+ 正确：  WHERE payment_id = 'pay_123' AND merchant_id = :认证得到的商户
+```
+
+要点：
+- 返回 **404，不是 403**。403 等于告诉对方"这笔支付存在，只是你不能看"。
+- **每一个**按 id 操作的接口都要带 `merchant_id`，不只是 GET，还有退款、取消。
+- 幂等键也按商户隔离：唯一约束 `(merchant_id, idempotency_key)`。否则 A 的 key 会和 B 的冲突，甚至读到 B 的响应。
+- id 用随机值（不是自增 1,2,3），增加猜中的难度；但**这只是额外一层，真正的保护是 merchant_id 检查**。
+
+> "I authenticate with an API key whose hash is stored, and the merchant id comes from the authenticated identity, never from the request body. Every query by payment id also filters by that merchant id, and I return 404 for payments that belong to someone else."
+
+## 12. 扩展性追问：讲清楚原理
+
+先记住一句话：**扩展性 = 找到先撑不住的那个点，再针对它处理。** 不要一上来就说"加机器、分库"。
+
+### 12.1 先看整条链路，哪里是瓶颈
+
+```text
+ 商户 -> [Gateway/Payment Service] -> [数据库] -> [银行]
+          无状态，容易扩        有状态，难扩    外部，不受我们控制
+```
+
+| 位置 | 为什么容易/难 | 处理 |
+| --- | --- | --- |
+| Gateway / Payment Service | **无状态**：不保存任何本机状态，哪台机器处理都一样 | 前面放负载均衡，**加机器（水平扩展）**即可 |
+| 数据库 | **有状态**：数据只有一份，写入要保证一致 | 最难扩，是第一个瓶颈（12.2） |
+| 银行 | 外部服务，慢、会限流，我们改不了 | 隔离和保护（12.3） |
+
+**无状态**是什么意思：服务不在内存里保存用户会话或中间结果，状态都在数据库里。这样任意一台机器挂了，请求打到另一台也能处理。
+
+**水平扩展 vs 垂直扩展：** 水平 = 加更多机器；垂直 = 换更大的机器。垂直有上限且贵，水平靠无状态才能做。
+
+### 12.2 数据库怎么扩（重点，必须能讲清楚）
+
+我们的写入模式：每笔支付 **至少两次写**（先插入 PENDING，再更新结果）。流量 10 倍，写入也 10 倍。
+
+**第一步：先别分库，先优化**
+- 加合适的索引（查询路径：`(merchant_id, idempotency_key)`、`payment_id`）。
+- 缩短事务（不要在事务里等银行响应，见下）。
+- 升级机器（垂直扩展，最简单）。
+
+**第二步：读写分离（Read Replica）**
+
+```text
+ 应用 --写--> 主库 (Primary) --复制（数据库自己做）--> 从库 (Replica) <--读-- 应用
+```
+
+**谁来复制？数据库自己。** MySQL 靠 binlog，PostgreSQL 靠 WAL 流复制：主库把每次写入记下来，从库不断读取并重放。我们不用写复制代码。
+
+**应用怎么决定读哪个库？** 应用侧要做两件事：
+1. **配两个数据源**：一个写主库，一个读从库（云数据库一般给两个地址：writer endpoint 和 reader endpoint）。
+2. **按规则路由：**
+   - 写操作，以及**事务里的所有操作** -> 主库。
+   - 只读且能接受稍旧数据的查询（列表、报表、历史）-> 从库。
+   - Java 里常见做法：Spring 的 `AbstractRoutingDataSource`，或用 `@Transactional(readOnly = true)` 作为"读从库"的标记；也可以用代理（ProxySQL）在数据库前面按 SQL 类型分流。
+
+**必须知道的坑：复制延迟（replication lag）。** 从库比主库晚几毫秒到几秒。
+- 刚写完马上读从库，可能读到旧数据（比如支付刚创建，查不到）。
+- 对策：
+  - **写之后的读走主库**（read-your-writes）：创建支付后马上查状态，读主库。
+  - 幂等检查、状态更新、余额检查这类**要求最新数据**的读，一律走主库。
+  - 报表、历史列表、对账走从库。
+- **读写分离只解决"读多"，不解决"写多"。** 写永远只有一个主库，写多了要靠分片。
+
+**第三步：分片（Sharding）**
+
+分片 = 把数据按分片键拆到多台数据库，每台只存一部分（和复制不同：复制是每台都存全部）。
+
+**分片键怎么选？先看最重要的查询和写入是什么。** 这里和 `payment-processor-design-prep.md` §6.4 保持一致：
+
+| 候选键 | 优点 | 缺点 |
+| --- | --- | --- |
+| **transaction/payment ID（推荐）** | 负载均匀，大商户的交易也会被打散；一笔支付以及它的 capture、refund 在同一分片，退款余额检查是本地事务 | 按商户查询（列表、报表）要跨分片 -> 用二级索引或读库解决 |
+| merchant_id | 按商户查询方便；商户内的幂等天然在同一分片 | 大商户（比如占 30% 流量）集中在一个分片，成为热点，可能放不下 |
+
+**我之前写 merchant_id 是不对的**，因为我们的工作单位是"一笔支付"，一笔支付不需要别的支付的数据，所以按支付打散更合适。
+
+**两个必须能回答的追问：**
+
+1. **`GET /payments/{id}` 怎么知道去哪个分片？** 把分片号编进 id 里（例如 `pay_<分片号>_<随机串>`），解析 id 就知道去哪个库。
+2. **授权请求在创建时还没有 id，幂等检查怎么做？** 创建前按 `hash(merchant_id, idempotency_key)` 路由到分片：
+   - 同一个 key 的所有重试一定落到同一个分片，唯一约束仍然有效。
+   - 同一个大商户的不同 key 会均匀分散到各分片，所以仍然没有热点。
+   - 然后在这个分片里生成 id，id 里带上这个分片号。
+
+**代价：**
+- 按商户的查询（列表、报表、对账）跨分片。用**二级索引、读库或数据仓库**，通过 CDC 从主库同步，按商户建键；交易库只做交易。
+- 扩容要搬数据（resharding），所以用"逻辑分片多于物理机器"的方式，以后只移动整个逻辑分片。
+- 跨分片事务基本不要做，设计成一笔支付的数据都在同一分片。
+- 超大商户：用一张小目录表给它专用分片组，是优化，不是默认。
+
+> "I'd shard by transaction id, so a payment and its captures and refunds sit together and the refund balance check is one local transaction. The shard number is part of the id, so a lookup goes straight to the right shard. For a new authorization with no id yet, I route by a hash of merchant id and idempotency key, so retries always hit the same shard and a big merchant is still spread across shards. Merchant-level reports use a read store fed by CDC."
+
+**为什么不在事务里等银行：** 事务一直占着数据库连接和行锁。银行慢（比如 5 秒）时，连接池耗尽，整个服务卡死。所以：
+```text
+ 事务 1（很短）：插入 PENDING -> 提交
+ 事务外：调银行（可能很慢）
+ 事务 2（很短）：更新结果 -> 提交
+```
+
+> "The first bottleneck is the database write path. I'd first add indexes and keep transactions short, never holding one open during the bank call. Then replicas for reads, with read-after-write queries going to the primary. If writes still outgrow one node, I'd shard by transaction id, so a payment and its refunds stay together and big merchants are spread across shards. The trade-offs are cross-shard merchant reports, which I'd serve from a read store, and resharding."
+
+### 12.3 银行调用怎么保护
+
+问题：银行慢时，我们的线程一直在等。线程池被占满 -> 其他银行的请求也进不来 -> 整个服务卡死。这叫**级联故障**。
+
+| 机制 | 是什么 | 解决什么 |
+| --- | --- | --- |
+| **超时（Timeout）** | 等银行最多 N 秒，到了就放弃 | 不会无限等待 |
+| **舱壁（Bulkhead）** | 每家银行**单独的线程池/连接池** | 一家慢，不会占光所有资源，其他银行正常 |
+| **熔断（Circuit Breaker）** | 某家银行连续失败超过阈值，**暂时不再调它**（快速失败），过一会儿放少量请求试探，恢复了再打开 | 给银行喘息时间，也不让我们的线程白等 |
+| **限流（Rate Limiting）** | 每个商户、每家银行有请求速率上限 | 一个商户不会拖垮其他人，也不超过银行的限额 |
+| **退避重试（Backoff）** | 重试间隔越来越长，加随机抖动 | 避免大家同时重试，把银行打垮 |
+
+熔断三个状态：
+```text
+ Closed（正常）--失败太多--> Open（拒绝，快速失败）--等一段时间--> Half-Open（试探几个请求）
+      ^                                                                  |
+      +----------------------成功，恢复--------------------------------+
+```
+
+### 12.4 其他常见手段（被问到再用）
+
+| 手段 | 什么时候用 | 取舍 |
+| --- | --- | --- |
+| **缓存（Cache）** | 读多、变化少的数据：商户配置、汇率、路由规则 | 要有明确的失效规则；**不缓存会变的支付状态**；**绝不缓存卡号** |
+| **消息队列** | 非关键路径：webhook 通知、对账、报表。让它们和主流程解耦 | 增加复杂度，要处理重复和顺序；授权这种要立刻返回结果的，**不能**异步 |
+| **异步 + 轮询/webhook** | 银行响应很慢时，先返回 Pending | 调用方要处理最终状态 |
+| **多区域部署** | 低延迟、容灾 | 数据一致性复杂，面试里先说"单区域 + 可恢复"，再说多区域 |
+
+### 12.5 流量 10 倍的回答模板
+
+1. **先说怎么发现：** 看指标：p99 延迟、数据库写延迟、连接池使用率、银行错误率和超时率。
+2. **按瓶颈顺序处理：** 无状态服务加机器 -> 数据库（索引、短事务、读写分离、分片）-> 银行（超时、舱壁、熔断、限流）。
+3. **说取舍：** 分片要考虑热点、跨分片查询、扩容；缓存要考虑失效和安全。
+4. **说不做什么（YAGNI）：** 流量没到之前不上分片，保持简单。
+
+> "I'd first check metrics to find the real bottleneck. The stateless services scale by adding instances. The database is the first real limit, so I'd handle it in steps: indexes and short transactions, then replicas, then sharding by merchant id if needed. For the banks, I'd use timeouts, a bulkhead per bank and a circuit breaker so one slow bank can't take everything down. I wouldn't shard before the numbers justify it."
+
+## 13. 第 3 轮面试的准备方向
+
+HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 轮是 system design，重点会有可扩展性。** 所以：
+- 第 2 轮：按 §10 的步骤提前做一遍，准备好"为什么这样设计"（安全、可扩展、测试）的解释，review 时要能把每个决定讲清楚。
+- 第 3 轮：需要对 high-level 概念有真正的理解。重点概念见 §12，其他主题在 `payment-processor-design-prep.md` 第 6 章（银行路由、慢银行隔离、限流、数据库扩展、对账、安全、灾备）。
