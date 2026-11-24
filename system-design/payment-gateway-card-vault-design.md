@@ -53,40 +53,88 @@ Part B 支付状态（正确性）：幂等键 -> 先落库 PENDING -> 风控 ->
 [Webhook Worker]   异步通知商户
 ```
 
-### 2.2 三段流程（按顺序看）
+### 2.2 整体框架图（先看这张，再看下面的编号说明）
 
-**段 1：收卡。卡号只走浏览器到 vault 这一条路**
-
-```text
- [Browser]  用户输入卡号（输入框是 vault 域名的 iframe）
-    │  (1) 卡号 + publishable key ──────▶ [Card Vault]  加密保存
-    │  (2) 一次性 token ◀───────────────── [Card Vault]
-    ▼
- 商户页面拿到 token -> 交给商户服务器    商户服务器和页面 JS 全程看不到卡号
-```
-
-**段 2：发起支付。商户只传 token**
+**怎么读：** 方框是组件，箭头是调用方向，括号里的数字是步骤编号。**主流程按 (1)(2)(3)... 的顺序看**；(14)(15) 是异步的后台流程。
 
 ```text
- [Merchant Server] ──(3) token + 金额 + 币种 + Idempotency-Key──▶ [API Gateway]
-                                                                      │ 认证、限流
-                                                                      ▼
-                                                              [Payment Service]
-   a. 校验请求格式  b. 幂等检查  c. 向 vault 取 token 的脱敏信息（last4/brand/bin，无卡号）
-   d. 落库 PENDING  e. 调 Risk Service  f. 调 Bank Adapter
+  ┌─────────────┐   (1) card number + publishable key               ┌─────────────────────────┐
+  │   Browser   │──────────────────────────────────────────────────▶│       Card Vault        │
+  │  (iframe)   │◀──────────────────────────────────────────────────│      encrypt + KMS      │
+  └─────────────┘   (2) one-time token                              │       + vault DB        │
+         │                                             ┌───────────▶│                         │
+         │                                             │            └─────────────────────────┘
+         │ token handed to merchant page               │                       ▲
+         │                                             │ (6) metadata, no PAN  │
+         │                                             │                       │
+         ▼                                             │                       │
+  ┌─────────────┐ (3)   ┌─────────────┐ (4)   ┌─────────────────┐              │
+  │  Merchant   │──────▶│ API Gateway │──────▶│ Payment Service │              │
+  │   Server    │◀──────│             │◀──────│                 │              │
+  └─────────────┘ (13)  └─────────────┘       └─────────────────┘              │ (9) detokenize
+        ▲                                       │      │      │                │ (mTLS, audited)
+        │                 (5) save, (12) update │      │      │(8) charge      │
+        │                      ┌────────────────┘      │      └─────────┐      │
+        │                      │                       │                │      │
+        │                      │                       │ (7) risk check │      │
+        │                      │                       │                │      │
+        │ (14) webhook         │                       │                │      │
+        │                      ▼                       ▼                ▼      │
+        │               ┌─────────────┐         ┌─────────────┐     ┌─────────────────────┐ (10)    ┌───────────┐
+        │               │ Payment DB  │         │Risk Service │     │    Bank Adapter     │────────▶│   Bank    │
+        │               └─────────────┘         └─────────────┘     └─────────────────────┘◀────────└───────────┘
+        │                 │   ▲                                           ▲                 (11)
+        │                 │   │                                           │
+        │   ┌─────────────┘   │                                           │
+        │   │ outbox          │                                           │
+        │   ▼                 │                                           │
+  ┌───────────────┐           │ (15) scan PENDING                         │
+  │Webhook Worker │           │                                           │
+  └───────────────┘           │                                           │
+                              │                                           │
+                        ┌───────────────────┐ (15) ask bank with payment_id
+                        │  Recovery Worker  │ ────────────────────────────┘
+                        └───────────────────┘
 ```
 
-**段 3：调银行。卡号只在这一步短暂出现**
+**三个阶段：**
+- **阶段 A：收卡（1）（2）**：卡号只走"浏览器 -> vault"这一条路。
+- **阶段 B：创建支付（3）到（8）、（10）到（13）**：商户只传 token。
+- **阶段 C：后台（14）（15）**：通知商户、恢复未完成的支付。
 
-```text
- [Payment Service] ──(4) payment_id + token + 金额──▶ [Bank Adapter]
- [Bank Adapter] ──(5) token ──▶ [Card Vault]（内部 mTLS，白名单，审计）
- [Bank Adapter] ◀──(6) 卡号 ── [Card Vault]
- [Bank Adapter] ──(7) 卡号 + 金额 + 引用(payment_id) ──▶ [Bank]
- [Bank Adapter] 立刻清除内存里的卡号，把银行结果翻译为 APPROVED / DECLINED / UNKNOWN 返回
-```
+### 2.3 每个编号做了什么
 
-### 2.3 谁能看到什么
+| 编号 | 从 -> 到 | 传什么 | 做什么 |
+| --- | --- | --- | --- |
+| **(1)** | Browser -> Card Vault | 卡号 + 商户的 publishable key | 用户在 vault 提供的 iframe 里输入卡号，**直接发给 vault**。商户页面的 JS 和服务器都读不到卡号。vault 校验 Luhn，用信封加密保存，另存 last4、bin6、brand 和指纹 |
+| **(2)** | Card Vault -> Browser | 一次性 token | 返回随机 token（短有效期）。页面把 token 交给商户服务器（图中 Browser 到 Merchant 的竖线） |
+| **(3)** | Merchant Server -> API Gateway | `POST /v1/payments`：token、金额、币种；请求头 `Authorization`（API key）、`Idempotency-Key` | 商户发起支付，**请求里只有 token，没有卡号** |
+| **(4)** | API Gateway -> Payment Service | 同上，加认证得到的 `merchant_id`、`request_id` | Gateway 用 API key 的哈希查出 `merchant_id`（认证），限流，生成 `request_id`；校验失败的请求在这里或下一步就 422 返回，不再往下走 |
+| **(5)** | Payment Service -> Payment DB | 新建一条支付记录 | 先**校验请求**（收集全部错误）；再**幂等**：`INSERT` 一条 `PENDING`，唯一约束 `(merchant_id, idempotency_key)`。插入成功才继续；冲突就读已有记录，返回原结果或 202 |
+| **(6)** | Payment Service -> Card Vault | `GET metadata`（内网 mTLS） | 校验 token（存在吗、属于这个商户吗、没过期吗），拿 last4、brand、bin、指纹。**没有卡号**。失败就终止，不调风控和银行 |
+| **(7)** | Payment Service -> Risk Service | 脱敏特征：bin6、last4、brand、指纹、金额、IP、设备 | 风控打分。**DECLINE -> 条件更新为 DECLINED(source=RISK)，不调银行，直接到 (13)**；ALLOW -> 继续。结果存进记录（`risk_decision`），重试不重新评分。超时 -> 默认放行并标记 UNSCORED |
+| **(8)** | Payment Service -> Bank Adapter | `payment_id`、token、金额、币种 | 请求去银行授权。`payment_id` 同时是发给银行的幂等引用 |
+| **(9)** | Bank Adapter -> Card Vault | token（内网 mTLS，仅 Bank Adapter 在白名单） | **detokenize：换回卡号**，写审计日志。第一次使用时把一次性 token 绑定到这个 `payment_id`。卡号只在 adapter 内存里，用完清除 |
+| **(10)** | Bank Adapter -> Bank | 卡号、金额、币种、引用 = `payment_id` | 按银行的格式组装请求，带超时调用银行 |
+| **(11)** | Bank -> Bank Adapter -> Payment Service | 银行的回复 | adapter 把结果翻译成 **APPROVED / DECLINED / UNKNOWN**。**超时是 UNKNOWN，不是 DECLINED** |
+| **(12)** | Payment Service -> Payment DB | 条件更新 + outbox | `UPDATE ... SET status=? WHERE payment_id=? AND status='PENDING'`，**同一个事务里写一条 outbox 事件**。UNKNOWN 则保持 PENDING |
+| **(13)** | Payment Service -> API Gateway -> Merchant Server | 响应 | Authorized / Declined 返回 200；Rejected 返回 422；PENDING 返回 202 |
+| **(14)** | Webhook Worker -> Merchant | webhook（签名、`event_id`） | **异步**：Worker 读 outbox 里未发送的事件，POST 给商户，失败退避重试。商户用 `event_id` 去重 |
+| **(15)** | Recovery Worker -> Payment DB / Bank | 扫描 PENDING；用 `payment_id` 查银行 | **异步**：扫描超过一定时间的 PENDING，用 lease 抢占，通过 Bank Adapter 用同一个 `payment_id` 向银行确认结果，条件更新状态并写 outbox，之后由 (14) 通知商户 |
+
+**按场景走一遍：**
+
+| 场景 | 经过的编号 |
+| --- | --- |
+| 收卡 | (1) -> (2) |
+| 正常支付成功 | (3) -> (4) -> (5) -> (6) -> (7) -> (8) -> (9) -> (10) -> (11) -> (12) -> (13)，之后 (14) |
+| 请求格式错误 | (3) -> (4) -> (5) 之前的校验 -> 422，不调任何下游 |
+| 风控拒绝 | (3) -> ... -> (7) DECLINE -> (12) -> (13)，不走 (8) 到 (11) |
+| 商户重复请求（同 key） | (3) -> (4) -> (5) 发现已有记录 -> 返回原结果，不走后面 |
+| 银行超时 | ... -> (10) 超时 -> (11) UNKNOWN -> (12) 保持 PENDING -> (13) 返回 202；之后 (15) 确认 -> (12) -> (14) |
+| 调完银行进程崩溃 | 记录是 PENDING -> (15) 恢复 -> (12) -> (14) |
+
+### 2.4 谁能看到什么
 
 | 角色 | 完整卡号 | token | last4 / brand / bin |
 | --- | --- | --- | --- |
