@@ -406,44 +406,79 @@ Prompt: POST /payments returning 422 with {status, errors} for Rejected, 200 for
 
 **认证 = 你是谁。授权 = 你能不能碰这个资源。** 两步，顺序不能反。
 
-```text
- 商户注册时：我们生成 API key，例如 sk_live_9fA3...（只在创建时显示一次）
-              数据库里只存 key 的哈希（SHA-256），不存明文
-              同时记下：这个 key 属于哪个 merchant_id
+**谁生成 API key？我们（平台）生成，不是商户。**
+商户在 Dashboard 点"创建 key"，我们的服务做三件事：
 
- 每次请求：   Authorization: Bearer sk_live_9fA3...
-   Gateway：  1. 取出 key，算哈希
-              2. 用哈希查库 -> 找到 merchant_id（找不到 -> 401）
-              3. 把 merchant_id 放进请求上下文，后面所有代码都用它
+```text
+ 1. 生成随机 key：  sk_live_ + 32 字节随机数（安全随机数生成器），例如 sk_live_9fA3k...
+ 2. 算哈希：        key_hash = SHA-256(完整的 key)
+ 3. 存库：          api_keys 表：key_hash, merchant_id, 状态, 创建时间, 过期时间
+                    **只存哈希，不存 key 本身**
+ 4. 把 key 明文只显示一次给商户，之后我们自己也找不回来
 ```
 
-要点（为什么这样做）：
+**收到请求时怎么"算哈希"？同样的算法再算一遍，再查表：**
+
+```text
+ 商户请求头：Authorization: Bearer sk_live_9fA3k...
+ Gateway：
+   1. 取出 key
+   2. h = SHA-256(key)              <- 和注册时同一个算法
+   3. SELECT merchant_id FROM api_keys WHERE key_hash = h AND 状态 = 有效
+   4. 没有结果 -> 401
+      有结果   -> 得到 merchant_id，放进请求上下文
+```
+
+为什么能行：哈希是单向的，同一个输入永远得到同一个哈希。我们不需要知道 key 是什么，只需要比较"这次算出来的哈希"和"库里存的哈希"是否相同。
+
+为什么存哈希而不是明文：数据库泄露时，攻击者只拿到哈希，反推不出 key，没法冒充商户（和密码的道理一样）。
+
+**为什么 API key 用普通 SHA-256 就行，密码却要 bcrypt？**
+- 密码是人想的，熵低，攻击者可以穷举，所以要用故意很慢的算法（bcrypt）。
+- API key 是 32 字节随机数，熵极高，穷举不可能，所以快速的 SHA-256 就够，而且每个请求都要算，快才好。
+
+要点：
 
 | 做法 | 原因 |
 | --- | --- |
-| 只存哈希，不存明文 | 数据库泄露时，攻击者拿不到可用的 key（和密码同理） |
-| `merchant_id` 来自**认证结果**，**不来自请求体或 URL** | 否则商户可以随便填别人的 id |
-| key 带前缀 `sk_live_` / `sk_test_` | 一眼分清环境，泄露后容易发现、扫描 |
+| `merchant_id` 来自**认证结果**（查表得到），**不来自请求体或 URL** | 否则商户可以随便填别人的 id |
+| key 带前缀 `sk_live_` / `sk_test_` | 一眼分清环境，泄露后容易扫描发现 |
 | 支持轮换（新旧 key 同时有效一段时间） | key 泄露时可以换，又不停服务 |
 | 限流 | 防暴力猜 key |
 
-更强的方式（被问到再说）：OAuth2 client credentials（短期 token）、mTLS（双向证书）、请求签名（HMAC）。**API key 是起点，简单够用（KISS）。**
+更强的方式（被问到再说）：OAuth2 client credentials（短期 token）、mTLS、请求签名（HMAC）。**API key 是起点，简单够用（KISS）。**
 
 ### 11.2 商户 A 怎么读不到商户 B 的支付？（授权 Authorization，防 IDOR）
 
-**IDOR（Insecure Direct Object Reference）：** 接口用 id 直接查数据，但没检查这个 id 是不是调用者的。
+先澄清一个容易混淆的点：**哈希只用在 `api_keys` 表里，保护 API key。`payments` 表里的 `merchant_id` 是普通明文列。** 两个不同的东西：
 
 ```text
- 错误：  GET /payments/pay_123  ->  SELECT * FROM payments WHERE id = 'pay_123'
+ api_keys 表：  key_hash（哈希） -> merchant_id     用来"认出你是谁"
+ payments 表：  payment_id, merchant_id（明文）, amount, status...
+```
+
+**完整链路：**
+
+```text
+ 请求：GET /payments/pay_123      Authorization: Bearer sk_live_...
+   1. 认证：key -> SHA-256 -> 查 api_keys -> merchant_id = "M_A"    （这里用哈希）
+   2. 授权：SELECT * FROM payments
+            WHERE payment_id = 'pay_123' AND merchant_id = 'M_A'      （这里用明文 merchant_id）
+   3. 没有结果 -> 404
+```
+
+**IDOR（Insecure Direct Object Reference）：** 只按 id 查，不检查归属。
+
+```text
+ 错误：  WHERE payment_id = 'pay_123'
          商户 A 猜到 B 的 pay_123，就能读到。
 
- 正确：  SELECT * FROM payments WHERE id = 'pay_123' AND merchant_id = :当前商户
-         不属于当前商户 -> 查不到 -> 返回 404
+ 正确：  WHERE payment_id = 'pay_123' AND merchant_id = :认证得到的商户
 ```
 
 要点：
-- 返回 **404，不是 403**。403 等于告诉对方"这笔支付存在，只是你不能看"，泄露信息。
-- **每一个**按 id 查询的接口都要带 `merchant_id`，不只是 GET，还有退款、取消。
+- 返回 **404，不是 403**。403 等于告诉对方"这笔支付存在，只是你不能看"。
+- **每一个**按 id 操作的接口都要带 `merchant_id`，不只是 GET，还有退款、取消。
 - 幂等键也按商户隔离：唯一约束 `(merchant_id, idempotency_key)`。否则 A 的 key 会和 B 的冲突，甚至读到 B 的响应。
 - id 用随机值（不是自增 1,2,3），增加猜中的难度；但**这只是额外一层，真正的保护是 merchant_id 检查**。
 
@@ -480,23 +515,56 @@ Prompt: POST /payments returning 422 with {status, errors} for Rejected, 200 for
 - 升级机器（垂直扩展，最简单）。
 
 **第二步：读写分离（Read Replica）**
+
 ```text
- 写 -> 主库 (Primary) ---复制---> 从库 (Replica) <- 读（查询、报表）
+ 应用 --写--> 主库 (Primary) --复制（数据库自己做）--> 从库 (Replica) <--读-- 应用
 ```
-- 解决"读多"的问题，**不解决"写多"**。
-- **复制有延迟**：刚写完马上去从库读，可能读不到。所以"支付后立刻查状态"这类读，要读主库（read-your-writes）。报表、历史查询可以读从库。
+
+**谁来复制？数据库自己。** MySQL 靠 binlog，PostgreSQL 靠 WAL 流复制：主库把每次写入记下来，从库不断读取并重放。我们不用写复制代码。
+
+**应用怎么决定读哪个库？** 应用侧要做两件事：
+1. **配两个数据源**：一个写主库，一个读从库（云数据库一般给两个地址：writer endpoint 和 reader endpoint）。
+2. **按规则路由：**
+   - 写操作，以及**事务里的所有操作** -> 主库。
+   - 只读且能接受稍旧数据的查询（列表、报表、历史）-> 从库。
+   - Java 里常见做法：Spring 的 `AbstractRoutingDataSource`，或用 `@Transactional(readOnly = true)` 作为"读从库"的标记；也可以用代理（ProxySQL）在数据库前面按 SQL 类型分流。
+
+**必须知道的坑：复制延迟（replication lag）。** 从库比主库晚几毫秒到几秒。
+- 刚写完马上读从库，可能读到旧数据（比如支付刚创建，查不到）。
+- 对策：
+  - **写之后的读走主库**（read-your-writes）：创建支付后马上查状态，读主库。
+  - 幂等检查、状态更新、余额检查这类**要求最新数据**的读，一律走主库。
+  - 报表、历史列表、对账走从库。
+- **读写分离只解决"读多"，不解决"写多"。** 写永远只有一个主库，写多了要靠分片。
 
 **第三步：分片（Sharding）**
-- 把数据按某个 **分片键（shard key）** 拆到多台数据库，每台只存一部分。
-- 为什么选 `merchant_id`：
-  - 大多数查询都带商户，请求只落到一个分片，不用跨库。
-  - 幂等的唯一约束 `(merchant_id, key)` 也在同一个分片内，仍然有效。
-- 方式：哈希（`hash(merchant_id) % N`，均匀）或范围；常用**一致性哈希**或"逻辑分片 + 映射表"，方便以后加机器时少搬数据。
-- **代价（面试要讲）：**
-  - **热点**：一个超大商户的流量集中在一个分片。对策：大商户单独分片，或用 `merchant_id + payment_id` 组合分散。
-  - **跨分片查询**很麻烦（比如"全平台某天的汇总"）：用报表库或数据仓库来做，不在交易库里查。
-  - **扩容要搬数据**（resharding），要提前设计。
-  - 跨分片事务基本不要做，设计时让一笔支付的所有数据在同一分片。
+
+分片 = 把数据按分片键拆到多台数据库，每台只存一部分（和复制不同：复制是每台都存全部）。
+
+**分片键怎么选？先看最重要的查询和写入是什么。** 这里和 `payment-processor-design-prep.md` §6.4 保持一致：
+
+| 候选键 | 优点 | 缺点 |
+| --- | --- | --- |
+| **transaction/payment ID（推荐）** | 负载均匀，大商户的交易也会被打散；一笔支付以及它的 capture、refund 在同一分片，退款余额检查是本地事务 | 按商户查询（列表、报表）要跨分片 -> 用二级索引或读库解决 |
+| merchant_id | 按商户查询方便；商户内的幂等天然在同一分片 | 大商户（比如占 30% 流量）集中在一个分片，成为热点，可能放不下 |
+
+**我之前写 merchant_id 是不对的**，因为我们的工作单位是"一笔支付"，一笔支付不需要别的支付的数据，所以按支付打散更合适。
+
+**两个必须能回答的追问：**
+
+1. **`GET /payments/{id}` 怎么知道去哪个分片？** 把分片号编进 id 里（例如 `pay_<分片号>_<随机串>`），解析 id 就知道去哪个库。
+2. **授权请求在创建时还没有 id，幂等检查怎么做？** 创建前按 `hash(merchant_id, idempotency_key)` 路由到分片：
+   - 同一个 key 的所有重试一定落到同一个分片，唯一约束仍然有效。
+   - 同一个大商户的不同 key 会均匀分散到各分片，所以仍然没有热点。
+   - 然后在这个分片里生成 id，id 里带上这个分片号。
+
+**代价：**
+- 按商户的查询（列表、报表、对账）跨分片。用**二级索引、读库或数据仓库**，通过 CDC 从主库同步，按商户建键；交易库只做交易。
+- 扩容要搬数据（resharding），所以用"逻辑分片多于物理机器"的方式，以后只移动整个逻辑分片。
+- 跨分片事务基本不要做，设计成一笔支付的数据都在同一分片。
+- 超大商户：用一张小目录表给它专用分片组，是优化，不是默认。
+
+> "I'd shard by transaction id, so a payment and its captures and refunds sit together and the refund balance check is one local transaction. The shard number is part of the id, so a lookup goes straight to the right shard. For a new authorization with no id yet, I route by a hash of merchant id and idempotency key, so retries always hit the same shard and a big merchant is still spread across shards. Merchant-level reports use a read store fed by CDC."
 
 **为什么不在事务里等银行：** 事务一直占着数据库连接和行锁。银行慢（比如 5 秒）时，连接池耗尽，整个服务卡死。所以：
 ```text
@@ -505,7 +573,7 @@ Prompt: POST /payments returning 422 with {status, errors} for Rejected, 200 for
  事务 2（很短）：更新结果 -> 提交
 ```
 
-> "The first bottleneck is the database write path. I'd first add indexes and keep transactions short, never holding one open during the bank call. Then replicas for reads, with read-after-write queries going to the primary. If writes still outgrow one node, I'd shard by merchant id, so most queries and the idempotency unique constraint stay within one shard. The trade-offs are hot merchants, cross-shard reporting, and resharding."
+> "The first bottleneck is the database write path. I'd first add indexes and keep transactions short, never holding one open during the bank call. Then replicas for reads, with read-after-write queries going to the primary. If writes still outgrow one node, I'd shard by transaction id, so a payment and its refunds stay together and big merchants are spread across shards. The trade-offs are cross-shard merchant reports, which I'd serve from a read store, and resharding."
 
 ### 12.3 银行调用怎么保护
 
