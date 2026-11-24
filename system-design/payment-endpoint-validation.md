@@ -281,3 +281,121 @@ public class PaymentController {
 | 为什么有效期当月算有效？ | 卡到当月最后一天才过期 |
 | 要不要把 Rejected 的请求存下来？ | 可以存审计记录（不含卡号），方便排查；但不要占用幂等键，除非设计需要 |
 | 校验规则变多怎么办？ | 每个检查一个小方法或规则对象，加规则不改老代码（开闭原则） |
+
+## 10. 怎么拆任务：一步一步让 AI 写，每步配测试
+
+原则：**每一步都能单独运行和测试，通过了再进入下一步**。每步的节奏固定：说计划 -> 写 prompt -> 审查输出 -> 跑测试 -> 提交。
+
+### 10.1 拆分顺序（由内到外，先纯逻辑，后接口）
+
+| 步骤 | 做什么 | 为什么这个顺序 |
+| --- | --- | --- |
+| 1 | 定义数据类型：`PaymentRequest`、`FieldError`、`PaymentStatus`、`BankResult` | 后面都依赖它，先定下契约 |
+| 2 | `PaymentValidator`（纯函数，收集全部错误） | 没有外部依赖，最容易测，也是核心规则 |
+| 3 | `BankClient` 接口 + 模拟器（或 fake） | 先定接口，才能 mock |
+| 4 | `PaymentService`：校验 -> 调银行 -> 映射结果 | 业务编排，依赖前两步 |
+| 5 | `PaymentController`：`POST /payments`，HTTP 状态码、响应格式 | 最外层，只做转换 |
+| 6 | 超时和异常处理（银行超时 -> Pending，不是 Declined） | 在主流程通了之后再加 |
+| 7 | 补强：幂等键、日志脱敏、并发（时间够再做） | 加分项，说清楚没做的也行 |
+
+为什么先内后外：内层是纯逻辑，测试快、定位简单；等到接口层，出问题就知道是 HTTP 的问题，不是规则的问题。
+
+### 10.2 每一步的 prompt 和测试
+
+**步骤 1：数据类型**
+
+```text
+Prompt: Create Java records: PaymentRequest(cardNumber, expiryMonth, expiryYear, cvv, amount, currency),
+        FieldError(field, code, message), and an enum PaymentStatus {AUTHORIZED, DECLINED, REJECTED, PENDING}.
+        Amount is a long in minor units. Records only, no logic.
+测试: 不需要。审查：金额是不是 long？字段有没有漏？
+```
+
+**步骤 2：校验器（重点）**
+
+```text
+Prompt: Write PaymentValidator.validate(request, YearMonth now) returning List<FieldError>.
+        Rules: card number 13-19 digits and passes Luhn; month 1-12; expiry not before current month;
+        cvv 3-4 digits; amount > 0; currency in GBP/USD/EUR.
+        Collect ALL errors, do not stop at the first. If a field is missing, report only "REQUIRED" for it.
+        Never put the card number in a message. Small private methods, easy to read.
+```
+
+先写测试（可以自己写，或让 AI 写后逐条检查）：
+
+| 测试 | 期望 |
+| --- | --- |
+| 合法请求 | 返回空列表 |
+| Luhn 不对 | 1 个错误，`INVALID_LUHN` |
+| 月份 13 | `OUT_OF_RANGE` |
+| 有效期是当月 | 通过（边界） |
+| 有效期是上个月 | `EXPIRED` |
+| 金额 0 和负数 | `INVALID` |
+| 币种 XYZ | `UNSUPPORTED` |
+| **同时 3 个错误** | 返回 3 条（证明不是 fail-first） |
+| 卡号为 null | 只有 `REQUIRED`，没有 Luhn 错误 |
+| 错误信息 | 不含完整卡号 |
+
+**步骤 3：银行接口和模拟器**
+
+```text
+Prompt: Create interface BankClient { BankResult authorize(PaymentRequest r); }.
+        BankResult has status APPROVED/DECLINED and a declineCode.
+        Throw BankTimeoutException on timeout.
+        Then a FakeBankClient for tests that I can configure to approve, decline, or time out,
+        and that counts how many times it was called.
+```
+
+测试：fake 本身行为正确（可简单验证）。**调用次数计数是后面"Rejected 时不调银行"的关键。**
+
+**步骤 4：PaymentService**
+
+```text
+Prompt: PaymentService.process(request): validate; if errors, return Rejected without calling the bank;
+        otherwise call BankClient and map APPROVED -> Authorized, DECLINED -> Declined.
+        On BankTimeoutException return Pending, not Declined.
+```
+
+| 测试 | 期望 |
+| --- | --- |
+| 有效请求 + 银行同意 | Authorized，银行调用 1 次 |
+| 有效请求 + 银行拒绝 | Declined，带 decline code |
+| **无效请求** | Rejected，**银行调用 0 次** |
+| 银行超时 | Pending，不是 Declined |
+| 多个错误 | Rejected 里有全部错误 |
+
+**步骤 5：Controller**
+
+```text
+Prompt: POST /payments returning 422 with {status, errors} for Rejected, 200 for Authorized/Declined,
+        504 with {status: "Pending"} for timeout. Response contains last4 only, never the full card number.
+```
+
+测试（`MockMvc` 或 `@WebMvcTest`）：状态码、JSON 结构、响应里**没有**完整卡号。
+
+**步骤 6：补强**
+- 日志脱敏：加测试，捕获日志，断言不含 16 位数字。
+- 幂等键：同一个 key 调两次，银行只被调 1 次。
+- 说出没做的："Persistence is in-memory here; in production I'd store the PENDING operation first."
+
+### 10.3 每一步的固定节奏（要说出来）
+
+```text
+1. 说计划   "Next I'll build the validator. It's pure logic, so easy to test."
+2. 写 prompt "I'll ask the AI for this one class only, with these rules."
+3. 审查输出 "It used double for amount / forgot null check. I'll fix it."
+4. 跑测试   "Let me add the three-errors test first. It should fail if the code stops at the first error."
+5. 小结     "Validator done. Now the bank client interface."
+```
+
+### 10.4 技巧
+
+- **测试先行也可以**：先让 AI 或自己写失败的测试，再写实现。展示你用测试驱动。
+- **让 AI 写测试后，你要检查**：它常常只测 happy path，要补边界和失败。
+- **故意问一次"这个测试会在什么情况下失败？"**，防止写出永远通过的测试。
+- **时间不够**：保证 1–2–4–5 四步和对应测试，其余口头说明。
+- **每步后跑一次全部测试**，不要攒到最后。
+
+### 10.5 英文口述
+
+"I'll build this from the inside out. First the data types, then the validator, which is pure logic, so I can test it thoroughly. Then a bank client interface with a fake, so I can count calls. Then the service that wires them together, and finally the controller. At each step I give the AI one small task with clear rules, review the result, and write tests before moving on. The most important test is that an invalid request is rejected with all its errors and the bank is called zero times."
