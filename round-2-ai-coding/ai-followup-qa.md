@@ -6,6 +6,104 @@
 
 ---
 
+## Part 0: AI coding 面试的解题步骤和互动 / Live round playbook
+
+核心：面试官看的不是 AI 写得多快，而是**你怎么指挥 AI、怎么判断它的输出**。AI 是你的初级搭档，设计和判断是你的。
+
+### 0.1 七个步骤
+
+| # | 步骤 | 做什么 | 说什么（English） |
+| --- | --- | --- | --- |
+| 1 | **澄清** | 问 3–5 个问题，写下假设（见 `../system-design/payment-endpoint-validation.md` §0） | "Before I start, a few questions…" |
+| 2 | **自己先想设计** | 用 1–2 分钟说出结构：接口、组件、关键决定，**先不让 AI 写** | "My plan is: validate, call the bank, map the result. I'll start with the validator." |
+| 3 | **拆小任务再写 prompt** | 一次让 AI 做一小块，不要"帮我写整个系统" | "I'll ask the AI for the validator only, so I can review it easily." |
+| 4 | **审查 AI 的输出** | 读完再用；**大声指出至少一个问题** | "It missed X. I'll fix it like this." |
+| 5 | **测试** | 先写或补测试：正常、边界、失败、重复请求；跑起来 | "Let me add a test for three errors at once, where the bank must not be called." |
+| 6 | **重构和补漏** | 命名、拆函数、去重复；补安全（日志不记卡号）和错误处理 | "I'll mask the card number in logs." |
+| 7 | **总结** | 说清做了什么、没做什么、下一步 | "Not done: persistence and idempotency. Next I'd add them like this." |
+
+时间分配（假设 60 分钟）：澄清 5、设计 5–10、编码加审查 30–35、测试 10、总结 5。**不要一上来就写代码。**
+
+### 0.2 怎么让面试官觉得你很会用 AI
+
+**做这些：**
+
+| 做法 | 为什么加分 |
+| --- | --- |
+| **先说计划，再让 AI 写** | 说明你在主导，不是被 AI 带着走 |
+| **prompt 给足上下文**：技术栈、接口、约束、不要做什么、示例 | 好的输入决定好的输出，面试官会看你的 prompt |
+| **小步前进，每步都验证** | 降低风险，容易发现问题 |
+| **大声说出审查过程**："这里 AI 用了 double 表示金额，我改成 long 的最小单位" | 这是最能体现你判断力的地方，**一定要说出来** |
+| **指出 AI 的遗漏**：边界、安全、日志、并发、幂等 | 证明你知道 AI 常漏什么 |
+| **自己写测试，或让 AI 写后逐条检查** | 测试是你对正确性的责任 |
+| **该自己写就自己写**：关键逻辑（状态、金额）自己写或逐行检查 | 说明你知道 AI 的边界 |
+| **AI 错了就直接改，不争论、不反复重试** | 同一个 prompt 重试三次说明没有思路 |
+| **提到安全和隐私**：不把真实卡号、密钥、公司代码发给 AI | 金融行业很看重 |
+
+**不要这样：**
+
+| 反例 | 问题 |
+| --- | --- |
+| 一上来就粘贴整道题，让 AI 全写 | 看不出你自己的设计 |
+| AI 输出直接用，不读、不说话 | 最大的减分项 |
+| 不知道代码在干什么 | 被追问就露馅 |
+| 一直沉默地打字 | 面试官看不到你的思路 |
+| 让 AI 决定设计取舍 | 你要给出 Decision -> Reason -> Trade-off |
+| 过度依赖，卡住了只会重新问 AI | 要先自己判断问题在哪 |
+
+### 0.3 好的 prompt 长什么样
+
+```text
+Context:   Java 17, Spring Boot. A POST /payments endpoint. A BankClient interface already exists.
+Task:      Write a PaymentValidator class only. Do not write the controller.
+Rules:     - Collect all errors; do not stop at the first one.
+           - Amount is a long in minor units, never double.
+           - Never include the full card number in error messages.
+Output:    Plain, readable code with small methods. No framework magic.
+Then:      I will review it and ask for tests separately.
+```
+
+要点：**一次一件事**、**说清不要做什么**、**写明约束**、**要求容易读的代码**。
+
+### 0.4 审查 AI 代码时的检查清单（说出来）
+
+- 金额用 `double` 了吗？
+- 错误信息或日志里有没有卡号、密钥？
+- 有没有校验输入（边界、null）？
+- 超时、重试、下游失败怎么处理？
+- 有没有幂等、并发问题？
+- 有没有"看起来对、其实没处理"的地方（吞掉异常、空 catch）？
+- 命名和结构是否容易读？能不能测试（依赖是接口吗）？
+
+示范说法：
+"The AI used a double for the amount. I'll change it to a long in minor units, because floating point can't represent money exactly."
+
+### 0.5 面试官互动的要点
+
+1. **一直说话**：边想边说，"I'm choosing X because Y, the trade-off is Z."
+2. **主动确认**：每个阶段问一句 "Does this direction look right to you?"
+3. **遇到卡住**：直接说 "I'm not sure about X. My options are A and B. I lean towards A because…"，不要沉默。
+4. **被指出问题**：不辩解，"Good point. I'll change it like this."
+5. **说出没做的**："I left out persistence and idempotency for time. This is how I'd add them."
+6. **展示判断**：有一次"我没有采用 AI 的建议，因为……"，比全盘接受更加分。
+
+### 0.6 可能被问的问题
+
+| 问题 | 回答要点 |
+| --- | --- |
+| 你为什么这样写 prompt？ | 一次一小块、给足上下文、写明约束，容易审查 |
+| 你怎么知道 AI 的代码是对的？ | 读代码、看边界和安全、写测试、运行；不信就验证 |
+| AI 哪里容易出错？ | 边界、安全（日志）、并发和幂等、金额精度、虚构的 API |
+| 什么情况下你不用 AI？ | 核心金额或状态逻辑、涉及敏感数据、需求还不清楚时 |
+| 你怎么保护代码和数据？ | 不贴真实卡号、密钥和公司代码；用脱敏示例 |
+| 如果 AI 给了两种方案，怎么选？ | 看需求、复杂度、可测试性，说取舍 |
+
+### 0.7 一句话总结
+
+"I decide the design, the AI writes the first draft, I review it out loud, and tests prove it works."
+
+---
+
 ## Part 1: Basic principles / 基本原理
 
 ### 1. How does an LLM work?
