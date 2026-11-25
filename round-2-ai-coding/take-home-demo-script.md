@@ -101,18 +101,65 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 
 > I never store, log, or return the full card number or CVV. Only the last four digits are kept. The request record's `toString()` is redacted, validation messages describe the rule and never quote the submitted value, and the 400 message is fixed text because Jackson's own message can quote the input. I checked the application log after running against the real simulator, and there was no card data.
 
-**再坦白没做到的（Not done, and what I'd add）：**
+**再坦白没做到的（Not done）。先用一句话开头，再逐个讲，每个都是 问题 → 方案 → 代价：**
 
-| 问题 | 回答要点 |
-| --- | --- |
-| 认证？ | 没做（brief 没要求）。生产里每个商户一个 API key，放在 `Authorization` header，保存时只存哈希。 |
-| 越权？（任何人能 GET 任何 id） | 现在确实可以。UUID 随机难猜，**但不能当作授权**。生产里支付记录带 merchant id，查询按 merchant id 过滤。这是 IDOR 风险，要主动说出来。 |
-| 传输加密？ | 代码里没有，TLS 在负载均衡或网关终止。 |
-| 存储 PAN / CVV？ | PCI 规则：CVV 授权后不能存。完整卡号只能放在合规的 vault 里，网关只存 token 加后四位（对应 Round 3 的 Card Vault 设计）。 |
-| 日志脱敏？ | 见上。再补一点：生产里加一个测试，往日志里打请求，断言没有卡号。 |
-| 限流 / 防重放？ | 没做。API 网关限流；重放靠幂等 key。 |
-| 输入攻击？ | 现在没有 SQL（内存存储）。上数据库后只用参数化查询。字段长度都有上限，卡号 14–19 位。 |
-| Swagger UI 暴露？ | 演示用。生产里关掉，或放在内网。 |
+> There are a few security gaps I know about. I kept them out of scope because the brief didn't ask for them, but I can tell you how I would fix each one. The two most important are authentication and per-merchant access.
+
+### 1. Authentication（没有认证）
+> **Problem:** Anyone who can reach the API can create payments.
+> **Fix:** Give each merchant an API key and send it in the `Authorization` header. A filter checks the key before the request reaches the controller. I store only a hash of the key, like a password.
+> **Trade-off:** Keys must be rotated and revoked, so I need a small key-management flow.
+
+### 2. Authorization / IDOR（任何人能读任何支付）
+> **Problem:** Today, anyone who knows a payment id can read that payment. A random UUID is hard to guess, but that is not real access control.
+> **Fix:** Save the merchant id with every payment. On `GET`, look up by payment id **and** merchant id. If it is not theirs, return 404, not 403, so we don't reveal that the payment exists.
+> **Trade-off:** One more column and one more condition in every query. It is cheap.
+
+### 3. Encryption in transit（传输加密）
+> **Problem:** The app itself speaks plain HTTP.
+> **Fix:** Terminate TLS at the load balancer or API gateway. Use TLS for the call to the bank too. Never accept plain HTTP in production.
+> **Trade-off:** Certificates need renewal, but that is usually automated.
+
+### 4. Card data at rest（卡号和 CVV 的存储）
+> **Problem:** If we ever stored the full card number, a database leak would be a disaster, and PCI rules are strict.
+> **Fix:** Today we keep only the last four digits, and we never keep the CVV. If the business needs the full number later, put it in a separate, PCI-compliant card vault, encrypted, and give the gateway only a token.
+> **Trade-off:** A vault is extra infrastructure, so I would not build it unless we need repeat payments.
+
+### 5. Rate limiting and abuse（限流和滥用）
+> **Problem:** A stolen key or a bot could send many requests. Attackers also use a payment API to test stolen card numbers (card testing).
+> **Fix:** Rate limit per merchant at the API gateway, and watch for many Declined results from one merchant. Add a request size limit so huge bodies are rejected early.
+> **Trade-off:** A limit that is too low blocks real traffic, so I would start loose and tune with real data.
+
+### 6. Replay and duplicate requests（重放和重复请求）
+> **Problem:** A retry, or a replayed request, creates a second payment.
+> **Fix:** Require an `Idempotency-Key` header. Store it with a unique constraint. The same key returns the first result instead of charging again.
+> **Trade-off:** One extra write per request, and we must decide how long to keep keys, for example 24 hours.
+
+### 7. Secrets and configuration（密钥和配置）
+> **Problem:** Today the bank URL is in `application.properties`. Later we will have API keys and bank credentials.
+> **Fix:** Load secrets from a secret manager or environment variables. Never commit them to Git.
+> **Trade-off:** Local setup is a bit harder.
+
+### 8. Logging, monitoring and audit（日志、监控、审计）
+> **Problem:** We log no card data, which is good, but we have no automatic check for it, no request id and no alerts.
+> **Fix:** Add a test that fails if a card number appears in logs. Add a request id to every log line. Alert on a high bank error rate and a high Rejected rate. Keep an audit log of who did what, without sensitive data.
+> **Trade-off:** More logs cost more to store, so keep them structured and short.
+
+### 9. Swagger UI and error details（Swagger 和错误信息）
+> **Problem:** Swagger UI is useful for the demo, but it shows the API to everyone.
+> **Fix:** Turn it off in production, or keep it behind the internal network. Error messages already don't repeat what the user sent, and the 400 message is fixed text.
+> **Trade-off:** None really, it is a config switch per environment.
+
+### 10. Dependencies（依赖安全）
+> **Problem:** A library with a known vulnerability puts the service at risk.
+> **Fix:** Run a dependency scan in CI and update regularly.
+> **Trade-off:** Updates sometimes break things, so tests matter.
+
+**被问"先修哪个？"：**
+> I would fix authentication and merchant-level access first, because without them anyone can read or create payments. Then idempotency, because duplicate charges hurt real money. Then rate limiting and monitoring.
+
+**被问"你怎么证明没有泄露卡号？"：**
+> Three things. The request's `toString()` never prints the card number or CVV. Error messages describe the rule and never quote the value. And I ran the app against the simulator and searched the log for card digits and found none. One gap: that last check was manual, so next I would add an automated test.
 
 ---
 
