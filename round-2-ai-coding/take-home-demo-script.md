@@ -242,9 +242,9 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 > **Trade-off:** Local setup is a bit harder.
 
 ### 8. Logging, monitoring and audit（日志、监控、审计）
-> **Problem:** We log no card data, which is good, but we have no automatic check for it, no request id and no alerts.
-> **Fix:** Add a test that fails if a card number appears in logs. Add a request id to every log line. Alert on a high bank error rate and a high Rejected rate. Keep an audit log of who did what, without sensitive data.
-> **Trade-off:** More logs cost more to store, so keep them structured and short.
+> **Problem:** Logs have a request id and no card data, and there are basic metrics, but nobody is alerted when something goes wrong.
+> **Fix:** Send metrics to a monitoring system and alert on the bank error rate, latency and 5xx rate (see 8.1).
+> **Trade-off:** More logs and metrics cost more to store, so keep logs structured and short.
 
 ### 9. Swagger UI and error details（Swagger 和错误信息）
 > **Problem:** Swagger UI is useful for the demo, but it shows the API to everyone.
@@ -310,10 +310,11 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 | **你做了什么可观测性？** | 三样：**日志**（每个请求有 request id，响应头也返回）、**指标**（HTTP 指标 + 业务计数器 `payments.processed`，按 authorized / declined / rejected / bank_unavailable 分类）、**健康检查**（liveness / readiness）。 |
 | **request id 有什么用？** | 商户报问题时，用它在日志里找到整条请求。调用方传的 id 只在合法时才沿用（字母、数字、`-`，最长 64），否则自己生成，防止日志注入。 |
 | **还缺什么？** | 分布式追踪、指标后端（Prometheus）、告警。 |
-| **你会告警什么？** | `bank_unavailable` 的比例、p99 延迟、5xx 比例。告警的是失败，不只是进程崩溃。 |
-| **怎么保证日志没有卡号？** | 请求对象的 `toString` 脱敏，有测试验证；拒绝日志只记字段名；我对运行中的应用 grep 过日志。生产里加 CI 检查。 |
+| **生产里加哪些指标？** | ① **流量和错误**：请求数、按状态码的 4xx / 5xx 比例（已有 HTTP 指标）。② **延迟**：p50 / p95 / p99。③ **业务结果**：`payments.processed` 按 outcome（已有）。④ **银行调用**：银行的延迟、超时数、错误数（还没单独做）。⑤ **资源**：JVM 堆内存、线程数、CPU。 |
+| **你会告警什么？** | ① `bank_unavailable` 比例升高（银行出问题）。② p99 延迟超过阈值。③ 5xx 比例升高。④ Declined 比例突然变化（可能是银行问题，也可能是欺诈或测试卡攻击）。⑤ readiness 探针失败或实例反复重启。⑥ 流量突然降到 0。阈值要按真实流量来定 [TODO]。告警的是**用户受到的影响**，不只是进程崩溃。 |
+| **怎么保证日志没有卡号？** | 请求对象的 `toString` 脱敏，有测试验证；拒绝日志只记字段名；我对运行中的应用 grep 过日志。 |
 
-> "I added a request id on every log line, health and readiness probes, and a business counter for payment outcomes. I did not add tracing or alerts. In production I would alert on the bank-unavailable rate and p99 latency."
+> "I added a request id on every log line, health and readiness probes, and a business counter for payment outcomes. In production I would send metrics to a monitoring system and alert on the bank-unavailable rate, p99 latency, the 5xx rate, and sudden changes in the decline rate. I would also add tracing across the gateway and the bank."
 
 ### 8.2 打包和托管（Packaging / Hosting）
 
