@@ -24,9 +24,12 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 
 ## 1. 开场（30 秒）
 
-> I built a payment gateway that sits between a merchant and an acquiring bank. A merchant posts card details, I validate them, call the bank, and return Authorized, Declined or Rejected. I store only the last four digits, and the merchant can fetch the payment later by id. I'll show it working, walk through the code, then happy to talk about security and scale.
+> For the take-home, the task was to implement a payment gateway API: a merchant posts card details, the gateway validates them, forwards them to an acquiring bank simulator, and returns the result. The merchant can also retrieve a payment by id. I'll start with a quick demo, then walk through the design decisions and my assumptions, and I'm happy to go deeper on security and scalability.
 
-要点：先说**做了什么**，再说**会怎么讲**，让面试官知道结构。
+要点：
+- 这是**作业**，不要说成"我自己做的产品"。先说**任务是什么**，再说**会怎么讲**，让面试官知道结构。
+- 说"我做了哪些设计决定和假设"，比说"我 build 了"更准确。
+- 如果问到 AI 的使用，按事实回答（见 §8）。
 
 ---
 
