@@ -159,6 +159,58 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 **一句话总结：**
 > I'd use per-merchant API keys: random, shown once, stored as a hash, checked in a filter before the controller. That gives me a merchant id for every request, and I use it to scope all data access. Keys can be rotated with two active keys and revoked instantly.
 
+#### 1.2 怎么防止 API key 被别人盗用？（被追问时讲）
+
+**先说实话：** 没有办法 100% 保证 key 不被偷，所以用**多层防御**：让它难被偷、被偷后伤害小、被偷后能很快发现并止损。
+
+> I can't guarantee a key is never stolen. So I use layers: make it hard to steal, limit the damage if it is stolen, detect it quickly, and be able to revoke it fast.
+
+**第 1 层：让它难被偷（Prevent）**
+
+| 方面 | 做法 |
+| --- | --- |
+| 传输 | 只允许 HTTPS，别人在网络上抓不到 key |
+| 我们这边的存储 | 只存哈希，数据库泄露也拿不到可用的 key |
+| 日志 | 绝不打印 key，header 要脱敏 |
+| 商户这边 | 告诉商户：key 只能放在**服务端**，放在密钥管理服务或环境变量里，不能放在手机 App 或前端代码里，也不能提交到 Git |
+| 强度 | key 是足够长的随机数，不能被猜出来 |
+
+> Keys travel only over HTTPS, we store only hashes, we never log them, and we tell merchants to keep them on the server side, never in a mobile app, browser code or Git.
+
+**第 2 层：被偷后伤害小（Limit the damage）**
+
+| 做法 | 说明 |
+| --- | --- |
+| 最小权限（scope） | 例如"只读 key"只能 GET，"支付 key"才能 POST |
+| IP 白名单 | 商户可以限制 key 只能从自己服务器的 IP 调用 |
+| 按 key 限流和限额 | 即使被偷，也不能无限制地调用或刷大额 |
+| 测试 key 和正式 key 分开 | 测试环境泄露不影响真实资金 |
+| 有效期 | key 定期过期，强制轮换 |
+
+> Each key has limited scope, an optional IP allow-list, its own rate limit, and an expiry date. A stolen key can only do so much.
+
+**第 3 层：尽快发现（Detect）**
+- 监控异常：突然来自新的 IP 或国家、请求量暴增、大量 Declined（可能在测试被盗卡号）。
+- 异常时告警，必要时自动暂停该 key。
+- 对每个 key 记录最后使用时间和来源，商户自己也能在后台看到。
+- 在 GitHub 上开启 **secret scanning**，key 带固定前缀（例如 `sk_live_`），这样泄露到公开代码里时能被自动发现。
+
+> We watch for unusual usage, like a new IP, a traffic spike, or many declines, and alert on it. Keys have a fixed prefix so secret scanners can spot them if they leak into public code.
+
+**第 4 层：快速止损（Respond）**
+- 商户或我们可以立刻**撤销**这个 key。
+- 轮换流程已经有（新旧两个 key 同时有效），所以换 key 不会停机。
+- 有事件处理流程：撤销、通知商户、检查期间的交易。
+
+**更强的方案（如果面试官想要更高安全）：**
+- **请求签名（HMAC）**：商户用 secret 对每个请求签名，secret 本身不在网络上传输，还能带时间戳防重放。
+- **mTLS**：双向证书，服务器验证客户端证书。
+- **OAuth2 客户端凭证**：令牌短期有效，泄露后很快失效。
+- 取舍：都比 API key 复杂，商户接入成本更高，所以第一版用 API key，之后再升级。
+
+**一句话总结：**
+> No single control is enough. I'd combine HTTPS and hashing to protect the key, scopes and IP limits to reduce the damage, monitoring to spot misuse, and fast revoke and rotate to recover. If we need stronger security later, I'd move to request signing.
+
 ### 2. Authorization / IDOR（任何人能读任何支付）
 > **Problem:** Today, anyone who knows a payment id can read that payment. A random UUID is hard to guess, but that is not real access control.
 > **Fix:** Save the merchant id with every payment. On `GET`, look up by payment id **and** merchant id. If it is not theirs, return 404, not 403, so we don't reveal that the payment exists.
