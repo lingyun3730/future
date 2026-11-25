@@ -647,7 +647,7 @@ HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 �
 ### 14.3 实现进度
 
 - [x] 第 1 步：类型。请求字段用包装类型（缺失为 null，便于报错）；`cardNumberLastFour` 用 String 避免前导零丢失。
-- [ ] 第 2 步：PaymentValidator（收集全部错误，可注入 Clock）
+- [x] 第 2 步：PaymentValidator（收集全部错误，可注入 Clock，每个字段只报第一条错误，错误信息不回显输入值；金额必须大于 0 是我的假设，README 要写明）
 - [ ] 第 3 步：BankClient（请求用 snake_case，处理 503）
 - [ ] 第 4 步：PaymentService
 - [ ] 第 5 步：Controller（POST、关闭 `accept-float-as-int`，否则 10.5 会被截断成 10）
