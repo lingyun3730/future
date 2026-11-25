@@ -651,7 +651,7 @@ HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 �
 - [x] 第 3 步：BankClient（接口 + `RestBankClient`；请求用 snake_case 和 `MM/YYYY`；503、400、连接失败/超时、空响应都变成 `BankUnavailableException`；日志和异常信息不含卡号）
 - [x] 第 4 步：PaymentService（校验失败抛 `PaymentRejectedException`，银行调用 0 次；银行结果映射为 Authorized/Declined；银行不可用抛 `BankUnavailableException`，不保存；只保存后四位；仓库改成 `ConcurrentHashMap`，因为多个请求会并发写）
 - [x] 第 5 步：Controller（`POST /payment`；422 带全部错误、502、400；关闭 `accept-float-as-int` 和 `allow-coercion-of-scalars`，`10.5` 和 `"100"` 返回 400；400 的错误信息是固定文字，因为 Jackson 的原始信息可能引用提交的卡号；已用真实 Docker 模拟器端到端验证，日志无卡号）
-- [ ] 第 6 步：测试补全 + README（设计考虑和假设）
+- [x] 第 6 步：补 3 个测试（共 75 个）+ 挑战仓库的 `DESIGN.md`（README 里加链接）。内容：决定和原因、假设、安全、有意不做的事、测试、运行方式。
 
 ### 14.4 环境备忘
 
