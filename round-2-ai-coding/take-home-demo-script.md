@@ -1,6 +1,6 @@
 # Take-home 演示稿：Payment Gateway
 
-用法：整场演示分三块，按这个顺序切换屏幕：**README（流程图）→ Swagger（演示）→ 代码（走读）**。
+用法：整场演示分三块，按这个顺序切换屏幕：**DESIGN.md（流程图）→ Swagger（演示）→ 代码（走读）**。
 中文是给你看的提示，`>` 开头的英文是可以直接说的话。最后留时间被追问。
 时间 [TODO 向 recruiter 确认面试时长和形式]，下面按 15 分钟讲 + 追问来排。
 
@@ -16,7 +16,7 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 ./gradlew bootRun         # 网关 :8090
 ```
 
-- 标签页 1，**README**：VS Code 打开 `README.md` 的 Markdown 预览，确认 "Request flow" 的 Mermaid 图能渲染。
+- 标签页 1，**DESIGN.md**：VS Code 打开 `DESIGN.md` 的 Markdown 预览，确认 "Request flow" 的 Mermaid 图能渲染。
 - 标签页 2，**Swagger**：浏览器打开 `http://localhost:8090/swagger-ui/index.html`，展开 POST /payment，点 **Try it out**。
 - 标签页 3，**代码**：`PaymentGatewayService`、`PaymentValidator`、`RestBankClient`、`CommonExceptionHandler`、`DESIGN.md`。
 - 备用方案：Swagger 打不开时，用 curl 发 `src/main/resources/openapi-examples/` 里的 JSON，例如 `curl -s -X POST localhost:8090/payment -H 'Content-Type: application/json' -d @src/main/resources/openapi-examples/1-authorized.json`。
@@ -35,13 +35,13 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 
 ---
 
-## 2. 【README】一张图讲清流程（1 分钟）
+## 2. 【DESIGN.md】一张图讲清流程（1 分钟）
 
-切到 README 的 "Request flow" 图。沿着实线讲一遍，再指虚线。
+切到 DESIGN.md 开头的 "Request flow" 图。沿着实线讲一遍，再指虚线。
 
 > The controller is thin. The service owns the flow: validate, call the bank, map the result, store. The solid arrows are the normal path. The dotted arrows are failures: invalid content is a 422 and the bank is never called, a bank 503 or timeout is a 502 and nothing is stored, and unreadable JSON is a 400. The bank is behind an interface, so the service can be tested without a network.
 
-README 里还有 DESIGN.md 的链接，说"assumptions and trade-offs are written down there"，后面被问到可以直接翻。
+同一份 DESIGN.md 里往下就是假设和取舍（"Not done on purpose" 表），后面被问到直接往下翻，不用切换文件。
 
 ---
 
@@ -51,16 +51,16 @@ README 里还有 DESIGN.md 的链接，说"assumptions and trade-offs are writte
 
 开场说一句：> The examples are pre-filled in the drop-down, so I just pick one and click Execute.
 
-| 步骤 | 选哪个示例 | 预期 | 要说的话 |
+| 步骤 | 选哪个示例（下拉框顺序和这里一致） | 预期 | 要说的话 |
 | --- | --- | --- | --- |
 | 1 | 1. Authorized | 200，`Authorized`，只有后四位 | "The bank simulator authorizes cards ending in an odd digit. Notice the response has only the last four digits and an id." |
 | 2 | 2. Declined | 200，`Declined` | "Declined is a normal business result, so it's still 200. The payment is stored either way." |
-| 3 | 4. Several invalid fields | 422，`Rejected`，多个错误 | "All errors come back at once, so the merchant fixes everything in one round trip. The bank is never called." |
-| 4 | 5. Fields missing | 422，每个必填字段一条 | "Missing fields are also content errors, because the JSON itself is valid." |
-| 5 | 6. Card expired | 422，一个 expiry 错误 | "The expiry month itself is still valid. The clock is injected, so this is testable." |
-| 6 | 8. Amount not a whole number | 422，`amount` 字段错误 | "Amount is in minor units, so 10.5 is rejected instead of silently rounded. Changing a money amount silently would be dangerous." |
+| 3 | 3. Several invalid fields | 422，`Rejected`，多个错误 | "All errors come back at once, so the merchant fixes everything in one round trip. The bank is never called." |
+| 4 | 4. Fields missing | 422，每个必填字段一条 | "Missing fields are also content errors, because the JSON itself is valid." |
+| 5 | 5. Card expired | 422，一个 expiry 错误 | "The expiry month itself is still valid. The clock is injected, so this is testable." |
+| 6 | 6. Amount not a whole number | 422，`amount` 字段错误 | "Amount is in minor units, so 10.5 is rejected instead of silently rounded. Changing a money amount silently would be dangerous." |
 | 7 | 7. Malformed JSON | 400 | "400 means I cannot read the request. 422 means I read it but the content is not acceptable." |
-| 8 | 3. Bank unavailable | 502 | "The bank returned 503. I return 502 and store nothing, because I don't have a result to record." |
+| 8 | 8. Bank unavailable | 502 | "The bank returned 503. I return 502 and store nothing, because I don't have a result to record." |
 | 9 | GET /payment/{id} | 200，粘贴步骤 1 返回的 id | "Retrieving the payment returns the same data. Still only the last four digits." |
 
 可选：GET 一个随机 UUID 返回 404；GET `not-a-uuid` 返回 400。
