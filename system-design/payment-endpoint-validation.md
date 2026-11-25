@@ -648,7 +648,7 @@ HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 �
 
 - [x] 第 1 步：类型。请求字段用包装类型（缺失为 null，便于报错）；`cardNumberLastFour` 用 String 避免前导零丢失。
 - [x] 第 2 步：PaymentValidator（收集全部错误，可注入 Clock，每个字段只报第一条错误，错误信息不回显输入值；金额必须大于 0 是我的假设，README 要写明）
-- [ ] 第 3 步：BankClient（请求用 snake_case，处理 503）
+- [x] 第 3 步：BankClient（接口 + `RestBankClient`；请求用 snake_case 和 `MM/YYYY`；503、400、连接失败/超时、空响应都变成 `BankUnavailableException`；日志和异常信息不含卡号）
 - [ ] 第 4 步：PaymentService
 - [ ] 第 5 步：Controller（POST、关闭 `accept-float-as-int`，否则 10.5 会被截断成 10）
 - [ ] 第 6 步：测试补全 + README（设计考虑和假设）
