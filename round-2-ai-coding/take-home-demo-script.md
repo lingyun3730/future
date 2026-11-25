@@ -327,6 +327,41 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 
 > "The app builds to one jar and one container image, and configuration comes from environment variables. The one thing to fix before scaling out is the in-memory store, which I would replace with a database."
 
+### 8.3 测试（Testing Mindset）
+
+**一句话：** 83 个测试，按层分开，每层只测自己的职责；银行是外部依赖，所以单元测试里全部用 mock，另外手动对真实模拟器跑过。
+
+| 层 | 测什么 | 为什么这样测 |
+| --- | --- | --- |
+| **校验器**（最多，约 18 个方法，参数化后更多） | 每条规则、边界（卡号 14 和 19 位、上个月/当月/下个月、过去的年份）、所有错误一次返回、错误信息不含用户提交的值 | 纯逻辑，快，边界最容易出错。时钟是固定的，所以测试不会随日期失败 |
+| **银行客户端**（9 个，`MockRestServiceServer`） | 已授权、已拒绝、银行 503、400、连接失败、空响应；请求字段名和 `MM/YYYY` 格式；报错和 `toString` 不含卡号 | 不需要真银行，也能验证"银行出问题时我们怎么表现" |
+| **服务层**（8 个） | 授权/拒绝被映射并保存；无效请求**零次**调用银行；银行不可用时不保存、也不当成 Declined；只存后四位；银行收到完整卡号；计数器按结果计数 | 业务流程和"调用顺序"，是最关键的一层 |
+| **控制器**（16 个，完整 Spring 上下文，银行 mock） | 所有状态码：200 / 400 / 422 / 404 / 502；缺字段；类型错误；amount 10.5 和 `"100"`；响应里没有卡号；POST 后 GET；request id 和健康检查端点 | 证明 HTTP 层、JSON 解析、异常映射串起来是对的 |
+| **模型**（1 个） | 请求对象的 `toString` 不含卡号、后四位、CVV | 防止有人 `log.info(request)` 泄露卡号 |
+
+**覆盖了的"坏"场景（面试官最爱问）：**
+- 所有无效输入、全部错误一次返回。
+- 银行不可用、超时、返回空：返回 502，且**不保存**。
+- 无效请求不会触发银行调用（零调用断言）。
+- 卡号、CVV 不出现在响应、日志、`toString`、错误信息里。
+- 同一请求发两次会创建两笔（用测试**记录**当前行为，对应"没做幂等"）。
+
+**覆盖率：** 行覆盖 71.6%，分支 100%。业务类（校验器、服务、客户端、控制器、异常处理）100%；没覆盖的是 Swagger 配置、一个没用到的模板类 `GetPaymentResponse`、`toString`。
+
+**没测、也要主动说的：**
+- **并发**：没有并发测试。POST 只是插入，没有共享计数器；`ConcurrentHashMap` 保证线程安全。
+- **幂等**：没做，测试只是记录现状。
+- **真实银行超时**：只测了连接失败和 503，没有测 10 秒读超时。
+- **负载和性能**：没做。
+- **认证、授权**：没有，所以没有对应测试。
+- **Docker 镜像**：手动验证过，没有放进 CI。
+
+**为什么银行用 mock，不用真模拟器跑测试？** 测试要快、稳定、不依赖 Docker；银行不可用这类场景用真模拟器很难稳定触发。真模拟器我手动跑了三种结果（尾号奇数 / 偶数 / 0）。
+
+**如果有更多时间：** 加一个**契约/集成测试**：在 CI 里用 Testcontainers 启动模拟器，自动跑那三种结果；加并发测试和幂等测试（等幂等实现后）。
+
+> "Each layer has its own tests. The validator tests cover every rule and boundary. The service tests prove that an invalid request never reaches the bank and that a bank failure is not stored. The controller tests check every status code through the full Spring context. The bank is mocked in tests, and I ran the real simulator by hand. What I did not test is concurrency, idempotency and the real read timeout, and I know that."
+
 ---
 
 ## 9. 收尾（30 秒）
