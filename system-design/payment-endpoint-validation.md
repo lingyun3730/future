@@ -650,7 +650,7 @@ HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 �
 - [x] 第 2 步：PaymentValidator（收集全部错误，可注入 Clock，每个字段只报第一条错误，错误信息不回显输入值；金额必须大于 0 是我的假设，README 要写明）
 - [x] 第 3 步：BankClient（接口 + `RestBankClient`；请求用 snake_case 和 `MM/YYYY`；503、400、连接失败/超时、空响应都变成 `BankUnavailableException`；日志和异常信息不含卡号）
 - [x] 第 4 步：PaymentService（校验失败抛 `PaymentRejectedException`，银行调用 0 次；银行结果映射为 Authorized/Declined；银行不可用抛 `BankUnavailableException`，不保存；只保存后四位；仓库改成 `ConcurrentHashMap`，因为多个请求会并发写）
-- [ ] 第 5 步：Controller（POST、关闭 `accept-float-as-int`，否则 10.5 会被截断成 10）
+- [x] 第 5 步：Controller（`POST /payment`；422 带全部错误、502、400；关闭 `accept-float-as-int` 和 `allow-coercion-of-scalars`，`10.5` 和 `"100"` 返回 400；400 的错误信息是固定文字，因为 Jackson 的原始信息可能引用提交的卡号；已用真实 Docker 模拟器端到端验证，日志无卡号）
 - [ ] 第 6 步：测试补全 + README（设计考虑和假设）
 
 ### 14.4 环境备忘
