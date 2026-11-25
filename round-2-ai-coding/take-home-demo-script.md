@@ -242,8 +242,8 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 > **Trade-off:** Local setup is a bit harder.
 
 ### 8. Logging, monitoring and audit（日志、监控、审计）
-> **Problem:** We log no card data, which is good, but we have no automatic check for it, no request id and no alerts.
-> **Fix:** Add a test that fails if a card number appears in logs. Add a request id to every log line. Alert on a high bank error rate and a high Rejected rate. Keep an audit log of who did what, without sensitive data.
+> **Problem:** We log no card data and every log line has a request id, but we have no automatic check that logs stay clean, no alerts and no audit log.
+> **Fix:** Add a test that fails if a card number appears in logs. Alert on a high bank error rate and a high Rejected rate. Keep an audit log of who did what, without sensitive data.
 > **Trade-off:** More logs cost more to store, so keep them structured and short.
 
 ### 9. Swagger UI and error details（Swagger 和错误信息）
