@@ -269,21 +269,43 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 **先问澄清问题（clarify first）：**
 > What traffic should I assume, and is it write-heavy? A payment gateway is write-heavy on POST and read-light on GET.
 
-**回答结构：**
+**回答结构（简单英文，直接照着说）：**
 
-1. **现在的瓶颈和限制**
-   - 内存 `ConcurrentHashMap`：线程安全，但数据在单个进程里，**不能水平扩展，重启就丢**。这是第一个要换的东西。
-   - 同步调用银行，超时是 10 秒（`RestTemplate` 的 connect 和 read）。流量大、银行慢时，线程会被占满。
-2. **我会怎么扩（按顺序，KISS）：**
-   - 数据库（有 payment id 索引），服务变成无状态，多实例放在负载均衡后面。
-   - 银行调用：超时调短，加熔断器和舱壁隔离（bulkhead），一个银行变慢不能拖垮整个网关。
-   - 幂等表（`Idempotency-Key` 加唯一约束）。
-   - 读：GET 走缓存或只读副本，写走主库。
-   - 数据增长：按 merchant id 分区，历史数据归档。
-   - 非关键工作异步化：webhook、对账、审计事件。
-3. **Trade-off：** 同步等银行结果，延迟高，但商户马上得到答案；异步加 webhook 吞吐更好，但商户要处理"待处理"状态，复杂度更高。
+**1. 现在的瓶颈和限制**
+- 内存存储：数据在一个进程里，不能起多个实例，重启就丢。第一个要换的。
+- 同步调用银行，超时 10 秒：流量大、银行慢时，线程都在等银行。
 
-**10 倍流量时什么先坏？** 银行调用的线程耗尽，其次才是数据库。
+> "Payments are stored in memory, in one process. So I can't run more than one instance, and I lose the data when the service restarts. I would replace this first."
+> "The service waits for the bank, with a 10-second timeout. If the bank is slow and traffic is high, all the threads are busy waiting."
+
+**2. 我会怎么扩（按顺序）**
+1. 数据库（payment id 有索引）→ 服务没有状态 → 多实例放在负载均衡后面。
+2. 银行调用：超时调短；熔断器（银行一直失败就暂时不调，快速返回错误）；限制同时调银行的线程数，一个慢银行不能占满所有线程。
+3. 幂等 key + 唯一约束，重试不会产生第二笔。
+4. 读：缓存或只读副本。
+5. 数据增长：按 merchant id 分区，历史数据归档。
+6. 非关键工作放后台：webhook、对账。
+
+> 1. "Use a database with an index on the payment id. Then the service has no state, and I can run many instances behind a load balancer."
+> 2. "Make the bank timeout shorter. Add a circuit breaker: if the bank keeps failing, we stop calling it for a while and return an error quickly. Also limit how many threads can call the bank at the same time, so a slow bank can't use all of them."
+> 3. "Add an idempotency key with a unique constraint, so a retry doesn't create a second payment."
+> 4. "For reads, use a cache or a read replica."
+> 5. "For data growth, partition by merchant id and archive old data."
+> 6. "Do non-critical work in the background, like webhooks and reconciliation."
+
+**3. Trade-off**
+> "If we wait for the bank, it is simple and the merchant gets the answer right away, but it is slower."
+> "If we use a webhook, we can handle more traffic, but the merchant must handle a 'pending' status, so it is more complex."
+
+**4. 10 倍流量时什么先坏？**
+> "The threads waiting for the bank run out first. The database is next."
+
+**30 秒口语版：**
+> "Right now the data is in memory, so I can only run one instance. First I would move to a database, so I can run many instances. The next problem is the bank call. If the bank is slow, all our threads wait. So I would use a shorter timeout and a circuit breaker. At ten times the traffic, the bank calls break first, then the database."
+
+**用词提示：** 不用 bulkhead，改说"限制同时调银行的线程数"；`scale out` = 水平扩展；`circuit breaker` = 熔断器。
+
+**可能的追问：熔断器打开时返回什么？** 快速返回 502 和稳定的错误信息，商户稍后重试。
 
 ---
 
