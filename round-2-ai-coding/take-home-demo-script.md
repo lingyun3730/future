@@ -12,7 +12,7 @@
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17 && export PATH=$JAVA_HOME/bin:$PATH
 cd /Users/lintao/codes/payment-gateway-challenge-java
 docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 colima / Docker Desktop）
-./gradlew test            # 确认 79 个测试全绿
+./gradlew test            # 确认 83 个测试全绿
 ./gradlew bootRun         # 网关 :8090
 ```
 
@@ -159,6 +159,58 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 **一句话总结：**
 > I'd use per-merchant API keys: random, shown once, stored as a hash, checked in a filter before the controller. That gives me a merchant id for every request, and I use it to scope all data access. Keys can be rotated with two active keys and revoked instantly.
 
+#### 1.2 怎么防止 API key 被别人盗用？（被追问时讲）
+
+**先说实话：** 没有办法 100% 保证 key 不被偷，所以用**多层防御**：让它难被偷、被偷后伤害小、被偷后能很快发现并止损。
+
+> I can't guarantee a key is never stolen. So I use layers: make it hard to steal, limit the damage if it is stolen, detect it quickly, and be able to revoke it fast.
+
+**第 1 层：让它难被偷（Prevent）**
+
+| 方面 | 做法 |
+| --- | --- |
+| 传输 | 只允许 HTTPS，别人在网络上抓不到 key |
+| 我们这边的存储 | 只存哈希，数据库泄露也拿不到可用的 key |
+| 日志 | 绝不打印 key，header 要脱敏 |
+| 商户这边 | 告诉商户：key 只能放在**服务端**，放在密钥管理服务或环境变量里，不能放在手机 App 或前端代码里，也不能提交到 Git |
+| 强度 | key 是足够长的随机数，不能被猜出来 |
+
+> Keys travel only over HTTPS, we store only hashes, we never log them, and we tell merchants to keep them on the server side, never in a mobile app, browser code or Git.
+
+**第 2 层：被偷后伤害小（Limit the damage）**
+
+| 做法 | 说明 |
+| --- | --- |
+| 最小权限（scope） | 例如"只读 key"只能 GET，"支付 key"才能 POST |
+| IP 白名单 | 商户可以限制 key 只能从自己服务器的 IP 调用 |
+| 按 key 限流和限额 | 即使被偷，也不能无限制地调用或刷大额 |
+| 测试 key 和正式 key 分开 | 测试环境泄露不影响真实资金 |
+| 有效期 | key 定期过期，强制轮换 |
+
+> Each key has limited scope, an optional IP allow-list, its own rate limit, and an expiry date. A stolen key can only do so much.
+
+**第 3 层：尽快发现（Detect）**
+- 监控异常：突然来自新的 IP 或国家、请求量暴增、大量 Declined（可能在测试被盗卡号）。
+- 异常时告警，必要时自动暂停该 key。
+- 对每个 key 记录最后使用时间和来源，商户自己也能在后台看到。
+- 在 GitHub 上开启 **secret scanning**，key 带固定前缀（例如 `sk_live_`），这样泄露到公开代码里时能被自动发现。
+
+> We watch for unusual usage, like a new IP, a traffic spike, or many declines, and alert on it. Keys have a fixed prefix so secret scanners can spot them if they leak into public code.
+
+**第 4 层：快速止损（Respond）**
+- 商户或我们可以立刻**撤销**这个 key。
+- 轮换流程已经有（新旧两个 key 同时有效），所以换 key 不会停机。
+- 有事件处理流程：撤销、通知商户、检查期间的交易。
+
+**更强的方案（如果面试官想要更高安全）：**
+- **请求签名（HMAC）**：商户用 secret 对每个请求签名，secret 本身不在网络上传输，还能带时间戳防重放。
+- **mTLS**：双向证书，服务器验证客户端证书。
+- **OAuth2 客户端凭证**：令牌短期有效，泄露后很快失效。
+- 取舍：都比 API key 复杂，商户接入成本更高，所以第一版用 API key，之后再升级。
+
+**一句话总结：**
+> No single control is enough. I'd combine HTTPS and hashing to protect the key, scopes and IP limits to reduce the damage, monitoring to spot misuse, and fast revoke and rotate to recover. If we need stronger security later, I'd move to request signing.
+
 ### 2. Authorization / IDOR（任何人能读任何支付）
 > **Problem:** Today, anyone who knows a payment id can read that payment. A random UUID is hard to guess, but that is not real access control.
 > **Fix:** Save the merchant id with every payment. On `GET`, look up by payment id **and** merchant id. If it is not theirs, return 404, not 403, so we don't reveal that the payment exists.
@@ -244,10 +296,36 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 | **并发？** | POST 只是插入，没有共享的计数器或余额，所以没有更新丢失问题。`ConcurrentHashMap` 保证并发读写安全。要更新余额才需要锁或版本号（对应之前的悲观锁/乐观锁讨论）。 |
 | **为什么 amount 不是整数是 422，不是 400？** | 分层规则：读不懂是 400，读得懂但内容不合法是 422。`10.5` 是数字，只是不符合"整数最小单位"这条业务规则。字符串 `"100"` 是类型错误，所以是 400。 |
 | **为什么不是 200 返回 Declined 以外的状态码？** | Declined 是银行给出的正常业务结果，请求本身是成功处理的。 |
-| **日志里有什么？** | 支付 id 和状态，没有卡号。生产里加 request id、指标（成功率、延迟、错误数）和告警。 |
-| **怎么测的？** | 79 个测试：校验器每条规则和边界；银行客户端用 `MockRestServiceServer`；服务层用假的银行；控制器用完整 Spring 上下文。另外对真实的 Docker 模拟器跑过三种结果。 |
+| **日志里有什么？** | 支付 id 和状态，每行带 request id，没有卡号。拒绝时只记无效字段的名字，不记值。 |
+| **怎么测的？** | 83 个测试：校验器每条规则和边界；银行客户端用 `MockRestServiceServer`；服务层用假的银行；控制器用完整 Spring 上下文。另外对真实的 Docker 模拟器跑过三种结果。 |
 | **你用了 AI 吗？** | [TODO 按事实回答。如果用了：说明你审查了每一步，做了哪些修改和决定（例如币种理解、422/400 规则、amount 的处理）。] |
 | **如果重做会改什么？** | 先存 `PENDING` 再调银行；加幂等；数据库；商户认证。 |
+
+---
+
+### 8.1 可观测性（Observability）
+
+| 追问 | 回答 |
+| --- | --- |
+| **你做了什么可观测性？** | 三样：**日志**（每个请求有 request id，响应头也返回）、**指标**（HTTP 指标 + 业务计数器 `payments.processed`，按 authorized / declined / rejected / bank_unavailable 分类）、**健康检查**（liveness / readiness）。 |
+| **request id 有什么用？** | 商户报问题时，用它在日志里找到整条请求。调用方传的 id 只在合法时才沿用（字母、数字、`-`，最长 64），否则自己生成，防止日志注入。 |
+| **还缺什么？** | 分布式追踪、指标后端（Prometheus）、告警。 |
+| **你会告警什么？** | `bank_unavailable` 的比例、p99 延迟、5xx 比例。告警的是失败，不只是进程崩溃。 |
+| **怎么保证日志没有卡号？** | 请求对象的 `toString` 脱敏，有测试验证；拒绝日志只记字段名；我对运行中的应用 grep 过日志。生产里加 CI 检查。 |
+
+> "I added a request id on every log line, health and readiness probes, and a business counter for payment outcomes. I did not add tracing or alerts. In production I would alert on the bank-unavailable rate and p99 latency."
+
+### 8.2 打包和托管（Packaging / Hosting）
+
+| 追问 | 回答 |
+| --- | --- |
+| **怎么打包和运行？** | `./gradlew bootJar` 得到一个可执行 jar；多阶段 Dockerfile（JDK 构建，JRE 运行，非 root 用户）；`docker-compose up --build` 一条命令启动网关和银行模拟器。 |
+| **配置怎么传？** | 环境变量，例如 `BANK_URL`，同一个镜像可用于任何环境。 |
+| **生产怎么部署？** | 镜像推到仓库，在 Kubernetes 或 ECS 上跑多个实例，用 readiness 探针决定是否接流量，滚动发布，优雅停机让进行中的请求完成。 |
+| **能直接多实例吗？** | 现在不能：内存存储有状态。要先换成数据库。 |
+| **容器化是谁负责？** | [反问] 我之前的公司由平台团队负责，开发者提供应用和配置。你们这里呢？ |
+
+> "The app builds to one jar and one container image, and configuration comes from environment variables. The one thing to fix before scaling out is the in-memory store, which I would replace with a database."
 
 ---
 
@@ -262,6 +340,7 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 - 你们真实的网关怎么处理银行超时后的状态未知？
 - 幂等 key 的范围是按商户，还是全局？
 - 你们怎么满足 PCI 范围的要求？
+- 容器化和部署是平台团队负责，还是开发团队自己负责？
 
 ---
 
