@@ -51,16 +51,16 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 
 开场说一句：> The examples are pre-filled in the drop-down, so I just pick one and click Execute.
 
-| 步骤 | 选哪个示例 | 预期 | 要说的话 |
+| 步骤 | 选哪个示例（下拉框顺序和这里一致） | 预期 | 要说的话 |
 | --- | --- | --- | --- |
 | 1 | 1. Authorized | 200，`Authorized`，只有后四位 | "The bank simulator authorizes cards ending in an odd digit. Notice the response has only the last four digits and an id." |
 | 2 | 2. Declined | 200，`Declined` | "Declined is a normal business result, so it's still 200. The payment is stored either way." |
-| 3 | 4. Several invalid fields | 422，`Rejected`，多个错误 | "All errors come back at once, so the merchant fixes everything in one round trip. The bank is never called." |
-| 4 | 5. Fields missing | 422，每个必填字段一条 | "Missing fields are also content errors, because the JSON itself is valid." |
-| 5 | 6. Card expired | 422，一个 expiry 错误 | "The expiry month itself is still valid. The clock is injected, so this is testable." |
-| 6 | 8. Amount not a whole number | 422，`amount` 字段错误 | "Amount is in minor units, so 10.5 is rejected instead of silently rounded. Changing a money amount silently would be dangerous." |
+| 3 | 3. Several invalid fields | 422，`Rejected`，多个错误 | "All errors come back at once, so the merchant fixes everything in one round trip. The bank is never called." |
+| 4 | 4. Fields missing | 422，每个必填字段一条 | "Missing fields are also content errors, because the JSON itself is valid." |
+| 5 | 5. Card expired | 422，一个 expiry 错误 | "The expiry month itself is still valid. The clock is injected, so this is testable." |
+| 6 | 6. Amount not a whole number | 422，`amount` 字段错误 | "Amount is in minor units, so 10.5 is rejected instead of silently rounded. Changing a money amount silently would be dangerous." |
 | 7 | 7. Malformed JSON | 400 | "400 means I cannot read the request. 422 means I read it but the content is not acceptable." |
-| 8 | 3. Bank unavailable | 502 | "The bank returned 503. I return 502 and store nothing, because I don't have a result to record." |
+| 8 | 8. Bank unavailable | 502 | "The bank returned 503. I return 502 and store nothing, because I don't have a result to record." |
 | 9 | GET /payment/{id} | 200，粘贴步骤 1 返回的 id | "Retrieving the payment returns the same data. Still only the last four digits." |
 
 可选：GET 一个随机 UUID 返回 404；GET `not-a-uuid` 返回 400。
