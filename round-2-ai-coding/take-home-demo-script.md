@@ -110,6 +110,55 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 > **Fix:** Give each merchant an API key and send it in the `Authorization` header. A filter checks the key before the request reaches the controller. I store only a hash of the key, like a password.
 > **Trade-off:** Keys must be rotated and revoked, so I need a small key-management flow.
 
+#### 1.1 API key flow 拆解（被追问"具体怎么做"时讲）
+
+**A. 发放 key（Issue）**
+1. 商户注册后，我们生成一个**随机的长 key**（例如 32 字节随机数，带前缀，如 `sk_live_...`）。
+2. 只在创建时给商户**看一次**。
+3. 数据库里存：`key_id`（key 的前缀，用来查找）、**key 的哈希**、`merchant_id`、状态（active / revoked）、创建时间、过期时间。**不存原始 key。**
+
+> We generate a long random key, show it to the merchant once, and store only its hash, plus a short key id, the merchant id and a status.
+
+**B. 每个请求怎么验证（Verify）**
+1. 商户在 header 里带上 `Authorization: Bearer <key>`。
+2. 一个 filter 在 Controller 之前运行：取出 key，用前缀找到那一行，对收到的 key 做哈希，和库里的哈希比较（用**常量时间比较**）。
+3. 状态必须是 active，并且没过期。
+4. 通过后，把 `merchant_id` 放进请求上下文。后面的 Service 用它，这正是 §2 里"按商户过滤"所需要的。
+5. 没带 key、key 错误或已撤销，返回 **401**，不进入 Controller。
+
+> A filter runs before the controller. It finds the key by its id, hashes the incoming key, and compares it with the stored hash. If it matches and the key is active, the request continues with the merchant id attached. If not, we return 401.
+
+**C. 轮换（Rotate）**
+1. 商户创建**第二个** key，两个同时有效一段时间。
+2. 商户把系统切换到新 key。
+3. 旧 key 设为 revoked。
+
+> Rotation works with two active keys at the same time, so the merchant can switch with no downtime.
+
+**D. 撤销（Revoke）**
+1. key 泄露时，商户或我们把状态改成 revoked。
+2. 下一个请求立刻被拒绝。如果验证结果有缓存，缓存时间要很短（例如 1 分钟），或者撤销时主动清掉缓存。
+
+> If a key leaks, we mark it revoked and the next request is rejected.
+
+**E. 为什么这样设计（可能的追问）**
+
+| 追问 | 回答 |
+| --- | --- |
+| 为什么存哈希，不存原始 key？ | 数据库泄露时，攻击者拿到的哈希不能直接用来调用 API。 |
+| 为什么不用 bcrypt，用 SHA-256 就行？ | key 是**长随机数**，不是用户选的密码，不能被字典攻击猜出来。SHA-256 又快，每个请求都要验证，用 bcrypt 会拖慢。这个理由要主动说出来。 |
+| 为什么用前缀查找？ | 先用 `key_id` 精确找到一行，再比较哈希，避免遍历所有 key。 |
+| 为什么用常量时间比较？ | 普通比较遇到第一个不同的字符就停，攻击者可以通过响应时间一点点猜出 key。 |
+| 401 还是 403？ | 401：你是谁我不知道（没带或错误的 key）。403：我知道你是谁，但你不能做这件事。 |
+| key 放在 URL 里行吗？ | 不行，URL 会被写进日志和浏览器历史。放 header。 |
+| 日志里要注意什么？ | 绝不打印 key，和卡号一样要脱敏。 |
+| 怎么实现？ | Spring 里用 `OncePerRequestFilter`，或者用 Spring Security 的自定义认证过滤器。小项目先用简单的 filter 就够。 |
+| 更强的方案？ | 请求签名（HMAC）、mTLS，或 OAuth2 客户端凭证。API key 简单，适合第一版。 |
+| 这和 IDOR 的关系？ | 认证回答"你是谁"，得到 `merchant_id`。授权（§2）用它回答"你能不能看这笔支付"，两者要一起做。 |
+
+**一句话总结：**
+> I'd use per-merchant API keys: random, shown once, stored as a hash, checked in a filter before the controller. That gives me a merchant id for every request, and I use it to scope all data access. Keys can be rotated with two active keys and revoked instantly.
+
 ### 2. Authorization / IDOR（任何人能读任何支付）
 > **Problem:** Today, anyone who knows a payment id can read that payment. A random UUID is hard to guess, but that is not real access control.
 > **Fix:** Save the merchant id with every payment. On `GET`, look up by payment id **and** merchant id. If it is not theirs, return 404, not 403, so we don't reveal that the payment exists.
