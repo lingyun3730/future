@@ -16,7 +16,7 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 ```
 
 - 浏览器打开 `http://localhost:8090/swagger-ui/index.html`，展开 POST /payment，点 **Try it out**。
-- 备用方案：终端里 `./demo.sh`（按 Enter 逐步演示），Swagger 出问题时用。
+- 备用方案：Swagger 打不开时，用 curl 手动发 `src/main/resources/openapi-examples/` 里的 JSON，例如 `curl -s -X POST localhost:8090/payment -H 'Content-Type: application/json' -d @src/main/resources/openapi-examples/1-authorized.json`。
 - 开好这几个文件的标签页：`PaymentGatewayService`、`PaymentValidator`、`RestBankClient`、`CommonExceptionHandler`、`DESIGN.md`。
 - 不要演示完整卡号的日志。需要看日志时只展示"没有卡号"这件事。
 
