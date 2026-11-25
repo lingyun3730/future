@@ -12,7 +12,7 @@
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17 && export PATH=$JAVA_HOME/bin:$PATH
 cd /Users/lintao/codes/payment-gateway-challenge-java
 docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 colima / Docker Desktop）
-./gradlew test            # 确认 79 个测试全绿
+./gradlew test            # 确认 83 个测试全绿
 ./gradlew bootRun         # 网关 :8090
 ```
 
@@ -296,10 +296,36 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 | **并发？** | POST 只是插入，没有共享的计数器或余额，所以没有更新丢失问题。`ConcurrentHashMap` 保证并发读写安全。要更新余额才需要锁或版本号（对应之前的悲观锁/乐观锁讨论）。 |
 | **为什么 amount 不是整数是 422，不是 400？** | 分层规则：读不懂是 400，读得懂但内容不合法是 422。`10.5` 是数字，只是不符合"整数最小单位"这条业务规则。字符串 `"100"` 是类型错误，所以是 400。 |
 | **为什么不是 200 返回 Declined 以外的状态码？** | Declined 是银行给出的正常业务结果，请求本身是成功处理的。 |
-| **日志里有什么？** | 支付 id 和状态，没有卡号。生产里加 request id、指标（成功率、延迟、错误数）和告警。 |
-| **怎么测的？** | 79 个测试：校验器每条规则和边界；银行客户端用 `MockRestServiceServer`；服务层用假的银行；控制器用完整 Spring 上下文。另外对真实的 Docker 模拟器跑过三种结果。 |
+| **日志里有什么？** | 支付 id 和状态，每行带 request id，没有卡号。拒绝时只记无效字段的名字，不记值。 |
+| **怎么测的？** | 83 个测试：校验器每条规则和边界；银行客户端用 `MockRestServiceServer`；服务层用假的银行；控制器用完整 Spring 上下文。另外对真实的 Docker 模拟器跑过三种结果。 |
 | **你用了 AI 吗？** | [TODO 按事实回答。如果用了：说明你审查了每一步，做了哪些修改和决定（例如币种理解、422/400 规则、amount 的处理）。] |
 | **如果重做会改什么？** | 先存 `PENDING` 再调银行；加幂等；数据库；商户认证。 |
+
+---
+
+### 8.1 可观测性（Observability）
+
+| 追问 | 回答 |
+| --- | --- |
+| **你做了什么可观测性？** | 三样：**日志**（每个请求有 request id，响应头也返回）、**指标**（HTTP 指标 + 业务计数器 `payments.processed`，按 authorized / declined / rejected / bank_unavailable 分类）、**健康检查**（liveness / readiness）。 |
+| **request id 有什么用？** | 商户报问题时，用它在日志里找到整条请求。调用方传的 id 只在合法时才沿用（字母、数字、`-`，最长 64），否则自己生成，防止日志注入。 |
+| **还缺什么？** | 分布式追踪、指标后端（Prometheus）、告警。 |
+| **你会告警什么？** | `bank_unavailable` 的比例、p99 延迟、5xx 比例。告警的是失败，不只是进程崩溃。 |
+| **怎么保证日志没有卡号？** | 请求对象的 `toString` 脱敏，有测试验证；拒绝日志只记字段名；我对运行中的应用 grep 过日志。生产里加 CI 检查。 |
+
+> "I added a request id on every log line, health and readiness probes, and a business counter for payment outcomes. I did not add tracing or alerts. In production I would alert on the bank-unavailable rate and p99 latency."
+
+### 8.2 打包和托管（Packaging / Hosting）
+
+| 追问 | 回答 |
+| --- | --- |
+| **怎么打包和运行？** | `./gradlew bootJar` 得到一个可执行 jar；多阶段 Dockerfile（JDK 构建，JRE 运行，非 root 用户）；`docker-compose up --build` 一条命令启动网关和银行模拟器。 |
+| **配置怎么传？** | 环境变量，例如 `BANK_URL`，同一个镜像可用于任何环境。 |
+| **生产怎么部署？** | 镜像推到仓库，在 Kubernetes 或 ECS 上跑多个实例，用 readiness 探针决定是否接流量，滚动发布，优雅停机让进行中的请求完成。 |
+| **能直接多实例吗？** | 现在不能：内存存储有状态。要先换成数据库。 |
+| **容器化是谁负责？** | [反问] 我之前的公司由平台团队负责，开发者提供应用和配置。你们这里呢？ |
+
+> "The app builds to one jar and one container image, and configuration comes from environment variables. The one thing to fix before scaling out is the in-memory store, which I would replace with a database."
 
 ---
 
@@ -314,6 +340,7 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 - 你们真实的网关怎么处理银行超时后的状态未知？
 - 幂等 key 的范围是按商户，还是全局？
 - 你们怎么满足 PCI 范围的要求？
+- 容器化和部署是平台团队负责，还是开发团队自己负责？
 
 ---
 
