@@ -1,6 +1,6 @@
 # Take-home 演示稿：Payment Gateway
 
-用法：整场演示分三块，按这个顺序切换屏幕：**README（流程图）→ Swagger（演示）→ 代码（走读）**。
+用法：整场演示分三块，按这个顺序切换屏幕：**DESIGN.md（流程图）→ Swagger（演示）→ 代码（走读）**。
 中文是给你看的提示，`>` 开头的英文是可以直接说的话。最后留时间被追问。
 时间 [TODO 向 recruiter 确认面试时长和形式]，下面按 15 分钟讲 + 追问来排。
 
@@ -16,7 +16,7 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 ./gradlew bootRun         # 网关 :8090
 ```
 
-- 标签页 1，**README**：VS Code 打开 `README.md` 的 Markdown 预览，确认 "Request flow" 的 Mermaid 图能渲染。
+- 标签页 1，**DESIGN.md**：VS Code 打开 `DESIGN.md` 的 Markdown 预览，确认 "Request flow" 的 Mermaid 图能渲染。
 - 标签页 2，**Swagger**：浏览器打开 `http://localhost:8090/swagger-ui/index.html`，展开 POST /payment，点 **Try it out**。
 - 标签页 3，**代码**：`PaymentGatewayService`、`PaymentValidator`、`RestBankClient`、`CommonExceptionHandler`、`DESIGN.md`。
 - 备用方案：Swagger 打不开时，用 curl 发 `src/main/resources/openapi-examples/` 里的 JSON，例如 `curl -s -X POST localhost:8090/payment -H 'Content-Type: application/json' -d @src/main/resources/openapi-examples/1-authorized.json`。
@@ -35,13 +35,13 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 
 ---
 
-## 2. 【README】一张图讲清流程（1 分钟）
+## 2. 【DESIGN.md】一张图讲清流程（1 分钟）
 
-切到 README 的 "Request flow" 图。沿着实线讲一遍，再指虚线。
+切到 DESIGN.md 开头的 "Request flow" 图。沿着实线讲一遍，再指虚线。
 
 > The controller is thin. The service owns the flow: validate, call the bank, map the result, store. The solid arrows are the normal path. The dotted arrows are failures: invalid content is a 422 and the bank is never called, a bank 503 or timeout is a 502 and nothing is stored, and unreadable JSON is a 400. The bank is behind an interface, so the service can be tested without a network.
 
-README 里还有 DESIGN.md 的链接，说"assumptions and trade-offs are written down there"，后面被问到可以直接翻。
+同一份 DESIGN.md 里往下就是假设和取舍（"Not done on purpose" 表），后面被问到直接往下翻，不用切换文件。
 
 ---
 
