@@ -1,6 +1,7 @@
 # Take-home 演示稿：Payment Gateway
 
-用法：中文是给你看的提示，`>` 开头的英文是可以直接说的话。先讲、再演示、再讲代码，最后准备被追问。
+用法：整场演示分三块，按这个顺序切换屏幕：**README（流程图）→ Swagger（演示）→ 代码（走读）**。
+中文是给你看的提示，`>` 开头的英文是可以直接说的话。最后留时间被追问。
 时间 [TODO 向 recruiter 确认面试时长和形式]，下面按 15 分钟讲 + 追问来排。
 
 ---
@@ -15,39 +16,40 @@ docker-compose up -d      # 银行模拟器 :8080（Docker 没起就先打开 co
 ./gradlew bootRun         # 网关 :8090
 ```
 
-- 浏览器打开 `http://localhost:8090/swagger-ui/index.html`，展开 POST /payment，点 **Try it out**。
-- 备用方案：Swagger 打不开时，用 curl 手动发 `src/main/resources/openapi-examples/` 里的 JSON，例如 `curl -s -X POST localhost:8090/payment -H 'Content-Type: application/json' -d @src/main/resources/openapi-examples/1-authorized.json`。
-- 开好这几个文件的标签页：`PaymentGatewayService`、`PaymentValidator`、`RestBankClient`、`CommonExceptionHandler`、`DESIGN.md`。
+- 标签页 1，**README**：VS Code 打开 `README.md` 的 Markdown 预览，确认 "Request flow" 的 Mermaid 图能渲染。
+- 标签页 2，**Swagger**：浏览器打开 `http://localhost:8090/swagger-ui/index.html`，展开 POST /payment，点 **Try it out**。
+- 标签页 3，**代码**：`PaymentGatewayService`、`PaymentValidator`、`RestBankClient`、`CommonExceptionHandler`、`DESIGN.md`。
+- 备用方案：Swagger 打不开时，用 curl 发 `src/main/resources/openapi-examples/` 里的 JSON，例如 `curl -s -X POST localhost:8090/payment -H 'Content-Type: application/json' -d @src/main/resources/openapi-examples/1-authorized.json`。
 - 不要演示完整卡号的日志。需要看日志时只展示"没有卡号"这件事。
 
 ---
 
 ## 1. 开场（30 秒）
 
-> I built a payment gateway that sits between a merchant and an acquiring bank. A merchant posts card details, I validate them, call the bank, and return Authorized, Declined or Rejected. I store only the last four digits, and the merchant can fetch the payment later by id. I'll show it working, walk through the code, then happy to talk about security and scale.
+> For the take-home, the task was to implement a payment gateway API: a merchant posts card details, the gateway validates them, forwards them to an acquiring bank simulator, and returns the result. The merchant can also retrieve a payment by id. I'll start with a quick demo, then walk through the design decisions and my assumptions, and I'm happy to go deeper on security and scalability.
 
-要点：先说**做了什么**，再说**会怎么讲**，让面试官知道结构。
-
----
-
-## 2. 一张图讲清流程（1 分钟）
-
-```
-Merchant ──POST /payment──▶ Controller ──▶ Service ──▶ Validator   (不合法：422，不调用银行)
-                                             │
-                                             ├──▶ BankClient ──▶ Bank simulator  (503/超时：502，不保存)
-                                             │
-                                             └──▶ Repository (内存，只存后四位)
-Merchant ──GET /payment/{id}──▶ Controller ──▶ Service ──▶ Repository
-```
-
-> The controller is thin. The service owns the flow: validate, call the bank, map the result, store. The bank is behind an interface, so the service can be tested without a network.
+要点：
+- 这是**作业**，不要说成"我自己做的产品"。先说**任务是什么**，再说**会怎么讲**，让面试官知道结构。
+- 说"我做了哪些设计决定和假设"，比说"我 build 了"更准确。
+- 如果问到 AI 的使用，按事实回答（见 §8）。
 
 ---
 
-## 3. 现场演示（5 分钟，在 Swagger 里选下拉框示例，点 Execute）
+## 2. 【README】一张图讲清流程（1 分钟）
 
-看 **Server response** 里的 Code，不要看 Responses 表格。
+切到 README 的 "Request flow" 图。沿着实线讲一遍，再指虚线。
+
+> The controller is thin. The service owns the flow: validate, call the bank, map the result, store. The solid arrows are the normal path. The dotted arrows are failures: invalid content is a 422 and the bank is never called, a bank 503 or timeout is a 502 and nothing is stored, and unreadable JSON is a 400. The bank is behind an interface, so the service can be tested without a network.
+
+README 里还有 DESIGN.md 的链接，说"assumptions and trade-offs are written down there"，后面被问到可以直接翻。
+
+---
+
+## 3. 【Swagger】现场演示（5 分钟，选下拉框示例，点 Execute）
+
+切到 Swagger。看 **Server response** 里的 Code，不要看 Responses 表格（那里列的是文档里声明的状态码）。
+
+开场说一句：> The examples are pre-filled in the drop-down, so I just pick one and click Execute.
 
 | 步骤 | 选哪个示例 | 预期 | 要说的话 |
 | --- | --- | --- | --- |
@@ -65,14 +67,17 @@ Merchant ──GET /payment/{id}──▶ Controller ──▶ Service ──▶
 
 ---
 
-## 4. 代码走读（3 分钟，按这个顺序）
+## 4. 【代码】走读（3 分钟，按这个顺序）
 
-1. `PaymentGatewayService.processPayment`：validate → bank → map status → store。"This is the whole flow in 20 lines."
-2. `PaymentValidator`：所有规则，收集全部错误，每个字段一条消息，`Clock` 注入。
-3. `RestBankClient` + `BankClient` 接口：snake_case、`MM/YYYY`，503、超时、空响应都变成 `BankUnavailableException`。
+演示里每个状态码，都对应到一处代码：
+
+1. `PaymentGatewayService.processPayment`：validate → bank → map status → store。"This is the whole flow in 20 lines, the same as the diagram."
+2. `PaymentValidator`：对应 422。所有规则，收集全部错误，每个字段一条消息，`Clock` 注入。
+3. `RestBankClient` + `BankClient` 接口：对应 502。snake_case、`MM/YYYY`，503、超时、空响应都变成 `BankUnavailableException`。
 4. `CommonExceptionHandler`：422 / 502 / 400 / 404 的映射，400 用固定文案。
-5. `PostPaymentRequest`：`toString()` 脱敏。
-6. `DESIGN.md`：假设、没做的、测试。
+5. `PostPaymentRequest`：`toString()` 脱敏，对应"没有卡号泄露"。
+6. `OpenApiConfiguration` + `resources/openapi-examples/`：Swagger 的示例从这里来，控制器里没有文档注解。
+7. `DESIGN.md`：假设、没做的、测试。
 
 ---
 
