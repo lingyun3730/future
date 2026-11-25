@@ -626,7 +626,7 @@ HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 �
 
 | # | 决定 | 原因 / 取舍 |
 | --- | --- | --- |
-| 1 | JSON 格式错误 400；内容不合法 422，一次返回全部错误 | 格式错和内容错的修复方式不同，商户能据此改。缺必填字段算内容错（JSON 本身合法） |
+| 1 | JSON 格式错误或类型错误（如 `amount` 是字符串）400；内容不合法 422，一次返回全部错误 | 格式错和内容错的修复方式不同，商户能据此改。缺必填字段算内容错（JSON 本身合法） |
 | 2 | 银行 503 返回 502，不保存记录，不说 Declined | 银行没给结果，不能当 Declined。取舍：没有幂等和 Pending 恢复，商户重试有重复扣款风险，README 写明是有意不做 |
 | 3 | 接受所有 ISO 4217 币种（`java.util.Currency`） | 我把规则读成"必须是合法 ISO 代码"。README 原文是 "no more than 3 currency codes"，有歧义，要在 README 写明假设；若出题意图是限制 3 个，改成一行 allowlist |
 | 4 | 有效期到期当月仍然有效，用可注入 `Clock` 测试 | 真实银行卡当月最后一天才过期。与 README 的 "in the future" 略有出入，要写明假设 |
@@ -650,7 +650,7 @@ HR 确认：**第 2 轮是线下作业，做完后找面试官 review；第 3 �
 - [x] 第 2 步：PaymentValidator（收集全部错误，可注入 Clock，每个字段只报第一条错误，错误信息不回显输入值；金额必须大于 0 是我的假设，README 要写明）
 - [x] 第 3 步：BankClient（接口 + `RestBankClient`；请求用 snake_case 和 `MM/YYYY`；503、400、连接失败/超时、空响应都变成 `BankUnavailableException`；日志和异常信息不含卡号）
 - [x] 第 4 步：PaymentService（校验失败抛 `PaymentRejectedException`，银行调用 0 次；银行结果映射为 Authorized/Declined；银行不可用抛 `BankUnavailableException`，不保存；只保存后四位；仓库改成 `ConcurrentHashMap`，因为多个请求会并发写）
-- [x] 第 5 步：Controller（`POST /payment`；422 带全部错误、502、400；关闭 `accept-float-as-int` 和 `allow-coercion-of-scalars`，`10.5` 和 `"100"` 返回 400；400 的错误信息是固定文字，因为 Jackson 的原始信息可能引用提交的卡号；已用真实 Docker 模拟器端到端验证，日志无卡号）
+- [x] 第 5 步：Controller（`POST /payment`；422 带全部错误、502、400；关闭 `accept-float-as-int` 和 `allow-coercion-of-scalars`，`"100"` 返回 400；后来把 `amount` 改成 `BigDecimal`，`10.5` 改为 422 加 `amount` 字段错误（避免面试官追问“为什么类型错是 400”）；400 的错误信息是固定文字，因为 Jackson 的原始信息可能引用提交的卡号；已用真实 Docker 模拟器端到端验证，日志无卡号）
 - [x] 第 6 步：补 3 个测试（共 75 个）+ 挑战仓库的 `DESIGN.md`（README 里加链接）。内容：决定和原因、假设、安全、有意不做的事、测试、运行方式。
 
 ### 14.4 环境备忘
