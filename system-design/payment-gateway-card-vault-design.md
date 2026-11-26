@@ -563,26 +563,26 @@ POST /v1/payments        Idempotency-Key: <商户生成的唯一值>
 
 ## 9. 面试官可能追问
 
-| 追问 | 答案要点 |
-| --- | --- |
-| 为什么不直接加密后存在业务库？ | 业务库访问面大，会把整个系统拉进 PCI 范围；隔离后只有 vault 要审计 |
-| 后四位为什么不每次解密取？ | 展示是高频读，每次解密扩大风险面，增加 KMS 调用；后四位低敏感，单独存 |
-| token 为什么要随机？ | 由卡号推算（哈希或可逆加密）的 token，拿到后可能反推卡号 |
-| 怎么识别同一张卡？ | 带密钥的 HMAC 指纹，不用明文，也不用后四位（会重复） |
-| 风控为什么不给卡号？ | 风控不应进入 PCI 范围；指纹、BIN、last4 足够做速度和地区规则 |
-| 风控挂了怎么办？ | 默认放行 + 本地规则 + 标记未评分 + 告警；高风险商户可 fail closed |
-| 风控的结果重试时怎么办？ | 保存在记录上，重试直接复用，不重新评分 |
-| 一次性 token 重试会不会失效？ | 第一次使用时绑定 payment_id，同一支付可重复还原，别的支付不能用 |
-| 银行超时为什么不返回 Declined？ | 不知道有没有扣款，返回 Declined 商户可能换 key 重试，造成重复扣款 |
-| 两个并发相同 key 怎么办？ | 唯一约束原子抢占，不是先查再插 |
-| 崩溃在银行调用之后怎么办？ | PENDING 记录加恢复 worker 加银行引用查询，对账兜底 |
-| 为什么按 transaction id 分片？ | 一笔支付和它的 capture、refund 在一起，大商户被打散；商户报表走读库 |
-| 创建时没有 id，怎么保证幂等？ | 按 `hash(merchant_id, key)` 路由到分片，同 key 重试落同一分片 |
-| vault 成为单点怎么办？ | 无状态多副本、多可用区、数据库主从；失败时明确返回，商户用同一个 key 重试 |
-| 密钥泄露怎么办？ | 轮换 KEK，重新加密 DEK；分层密钥缩小影响；检测和告警 |
-| 内部人员怎么防？ | 没有人工解密接口，最小权限，全量审计，敏感操作双人审批 |
-| 退款或 capture 还需要卡号吗？ | 一般用银行返回的引用，不需要卡号；需要时用 token 通过 Bank Adapter 换 |
-| 如果商户不用 hosted fields，直接传卡号？ | 只对合格商户开放，在入口立刻转给 vault，关掉该接口的请求体日志；双方 PCI 范围变大 |
+| 追问 | 答案要点 | English（简短版） |
+| --- | --- | --- |
+| 为什么不直接加密后存在业务库？ | 业务库访问面大，会把整个系统拉进 PCI 范围；隔离后只有 vault 要审计 | The business database has a wide access surface, so it would pull the whole system into compliance scope. With a separate vault, only the vault is audited. |
+| 后四位为什么不每次解密取？ | 展示是高频读，每次解密扩大风险面，增加 KMS 调用；后四位低敏感，单独存 | Showing the last four is a frequent read. Decrypting each time adds risk and key service calls, and the last four are low-sensitivity, so I store them separately. |
+| token 为什么要随机？ | 由卡号推算（哈希或可逆加密）的 token，拿到后可能反推卡号 | A token made from the card number, by a hash or reversible encryption, might be used to work out the card number. A random token has no link to it. |
+| 怎么识别同一张卡？ | 带密钥的 HMAC 指纹，不用明文，也不用后四位（会重复） | A keyed HMAC fingerprint of the card number. Not the plain number, and not the last four, because those repeat across cards. |
+| 风控为什么不给卡号？ | 风控不应进入 PCI 范围；指纹、BIN、last4 足够做速度和地区规则 | The risk service should stay out of compliance scope. The fingerprint, BIN and last four are enough for velocity and country rules. |
+| 风控挂了怎么办？ | 默认放行 + 本地规则 + 标记未评分 + 告警；高风险商户可 fail closed | By default, allow the payment, apply simple local rules, mark it unscored, and alert. For high-risk merchants, fail closed instead. |
+| 风控的结果重试时怎么办？ | 保存在记录上，重试直接复用，不重新评分 | The decision is saved on the payment record, so a retry reuses it and does not score again. |
+| 一次性 token 重试会不会失效？ | 第一次使用时绑定 payment_id，同一支付可重复还原，别的支付不能用 | The token is bound to the payment id on first use. The same payment can use it again on retry, but no other payment can. |
+| 银行超时为什么不返回 Declined？ | 不知道有没有扣款，返回 Declined 商户可能换 key 重试，造成重复扣款 | We don't know if the card was charged. If we say Declined, the merchant may retry with a new key and charge the customer twice. |
+| 两个并发相同 key 怎么办？ | 唯一约束原子抢占，不是先查再插 | A unique constraint on the key decides the winner in one atomic step. It is not check-then-insert. |
+| 崩溃在银行调用之后怎么办？ | PENDING 记录加恢复 worker 加银行引用查询，对账兜底 | The payment stays PENDING. A recovery worker asks the bank with the same payment id, and reconciliation is the final safety net. |
+| 为什么按 transaction id 分片？ | 一笔支付和它的 capture、refund 在一起，大商户被打散；商户报表走读库 | A payment, its capture and its refund stay together, and a big merchant is spread across shards. Merchant reports use a read database. |
+| 创建时没有 id，怎么保证幂等？ | 按 `hash(merchant_id, key)` 路由到分片，同 key 重试落同一分片 | Route by hash of merchant id and idempotency key, so a retry with the same key lands on the same shard. |
+| vault 成为单点怎么办？ | 无状态多副本、多可用区、数据库主从；失败时明确返回，商户用同一个 key 重试 | Run many stateless copies across zones, with a primary and replicas for the database. On failure, return a clear error and let the merchant retry with the same key. |
+| 密钥泄露怎么办？ | 轮换 KEK，重新加密 DEK；分层密钥缩小影响；检测和告警 | Rotate the master key and re-encrypt the data keys. Layered keys limit the damage, and we detect and alert on unusual use. |
+| 内部人员怎么防？ | 没有人工解密接口，最小权限，全量审计，敏感操作双人审批 | There is no manual decrypt endpoint. We use least privilege, full audit logs, and two-person approval for sensitive actions. |
+| 退款或 capture 还需要卡号吗？ | 一般用银行返回的引用，不需要卡号；需要时用 token 通过 Bank Adapter 换 | Usually not. We use the reference the bank gave us. If we need the card, the bank adapter swaps the token for it. |
+| 如果商户不用 hosted fields，直接传卡号？ | 只对合格商户开放，在入口立刻转给 vault，关掉该接口的请求体日志；双方 PCI 范围变大 | Only for qualified merchants. We pass the number to the vault at the edge, turn off body logging for that endpoint, and both sides have a bigger compliance scope. |
 
 ## 10. 待确认（不要编）
 
