@@ -42,12 +42,14 @@ Part B 支付状态（正确性）：幂等键 -> 先落库 PENDING -> 风控 ->
 
 **最容易被追问的 4 个问题，一句话答：**
 
-| 问题 | 答案 |
-| --- | --- |
-| token 和加密有什么区别？ | token 是随机编号，和卡号没有数学关系，只能查 vault；加密的密文有密钥就能解开 |
-| token 被偷了怎么办？ | 单独没用：它绑定商户，只有 Bank Adapter 能还原，一次性 token 很快过期 |
-| vault 挂了怎么办？ | 不绕过。返回可重试的 503，商户用同一个幂等键重试 |
-| 为什么卡号不经过 Payment Service？ | 这样只有 vault 和 Bank Adapter 需要通过最严格的合规审计，范围越小越好 |
+| 问题 | 答案 | English（简短版） |
+| --- | --- | --- |
+| token 和加密有什么区别？ | token 是随机编号，和卡号没有数学关系，只能查 vault；加密的密文有密钥就能解开 | "A token is a random ID with no link to the card number, so you can only look it up in the vault. Encrypted data can be decrypted with the key." |
+| token 被偷了怎么办？ | 单独没用：它绑定商户，只有 Bank Adapter 能还原，一次性 token 很快过期 | "A stolen token is not useful alone. It belongs to one merchant, only the bank adapter can turn it back into a card number, and one-time tokens expire quickly." |
+| vault 挂了怎么办？ | 不绕过。返回可重试的 503，商户用同一个幂等键重试 | "We don't bypass it. We return a retryable 503, and the merchant retries with the same idempotency key." |
+| 为什么卡号不经过 Payment Service？ | 这样只有 vault 和 Bank Adapter 需要通过最严格的合规审计，范围越小越好 | "So only the vault and the bank adapter are in the strictest compliance scope. A smaller scope is easier and safer." |
+| BIN 是什么？ | 卡号前 6 位，表示发卡银行、卡组织、卡类型 | "The BIN is the first six digits of the card. It tells us the issuing bank and card type, so we can use it for risk checks without the full number." |
+| 为什么能显示后四位？ | 信息量小，无法还原卡号，合规允许；单独一列，展示不需要解密 | "The last four digits can't rebuild the card number, and we store them in their own column, so showing them never needs decryption." |
 
 **1 分钟英文口述：**
 > "Card numbers live only in a vault. The browser sends the card number straight to the vault and gets back a token, so the merchant server never sees it. Our payment service stores only the token and the last four digits. When we call the bank, the bank adapter swaps the token for the card number, uses it once, and drops it. Only the adapter is allowed to do that, and every request is logged. The last four digits are stored in a separate column, so showing them never needs decryption. The trade-off is one extra call to the vault for each bank request."
