@@ -14,7 +14,45 @@ Part B 支付状态（正确性）：幂等键 -> 先落库 PENDING -> 风控 ->
 两部分的连接点：支付请求里只有 token；风控只看脱敏特征；重试时只带 token，从不需要卡号
 ```
 
-建议的讲述顺序（约 5 分钟）：Clarify（1 分钟）-> 架构总览（1 分钟）-> Part A（1.5 分钟）-> Part B 含风控（1.5 分钟）-> 取舍和扩展（30 秒）-> 确认。
+建议的讲述顺序（约 5 分钟）：Clarify（1 分钟）-> 架构总览（1 分钟）-> Part A（1.5 分钟，**只讲 §0.5 简化版**）-> Part B 含风控（1.5 分钟）-> 取舍和扩展（30 秒）-> 确认。
+
+## 0.5 Vault 简化版（面试先讲这个，约 1 分钟；下面 §2、§3 是被追问时才用的完整版）
+
+**一句话：卡号只存在 vault 里。其他系统只拿 token 和后四位。**
+
+**只记 4 步：**
+
+```text
+(1) 浏览器 ──卡号──▶ Vault ──token──▶ 浏览器      收卡：卡号只走这一条路
+(2) 商户服务器 ──token + 金额──▶ 我们的 Payment Service   商户只传 token
+(3) Payment Service 只存 token + 后四位              我们的库里没有卡号
+(4) Bank Adapter ──token──▶ Vault 换回卡号 ──▶ 银行   只有这一步能拿到卡号，用完就丢
+```
+
+**只讲 3 层保护（回答"卡号存哪、怎么只显示后四位"）：**
+
+| 层 | 一句话 | English |
+| --- | --- | --- |
+| 1. 存 | 卡号加密后存在单独的 vault，密钥放在 KMS，不和数据放一起 | "Card numbers are encrypted in a separate vault, and the key lives in a key management service." |
+| 2. 用 | 只有 Bank Adapter 能把 token 换回卡号，每次都记审计日志 | "Only the bank adapter can turn a token back into a card number, and every request is logged." |
+| 3. 看 | 入库时后四位单独存一列，展示只读这一列；接口只返回白名单字段；日志脱敏 | "The last four digits are stored in their own column, so the rest of the system never needs the full number." |
+
+**先不要讲（被追问再展开，细节在下面的 §3）：**
+信封加密（DEK / KEK）、一次性 token 绑定支付、卡指纹、密钥轮换、vault 分片、PCI 范围。
+
+**最容易被追问的 4 个问题，一句话答：**
+
+| 问题 | 答案 |
+| --- | --- |
+| token 和加密有什么区别？ | token 是随机编号，和卡号没有数学关系，只能查 vault；加密的密文有密钥就能解开 |
+| token 被偷了怎么办？ | 单独没用：它绑定商户，只有 Bank Adapter 能还原，一次性 token 很快过期 |
+| vault 挂了怎么办？ | 不绕过。返回可重试的 503，商户用同一个幂等键重试 |
+| 为什么卡号不经过 Payment Service？ | 这样只有 vault 和 Bank Adapter 需要通过最严格的合规审计，范围越小越好 |
+
+**1 分钟英文口述：**
+> "Card numbers live only in a vault. The browser sends the card number straight to the vault and gets back a token, so the merchant server never sees it. Our payment service stores only the token and the last four digits. When we call the bank, the bank adapter swaps the token for the card number, uses it once, and drops it. Only the adapter is allowed to do that, and every request is logged. The last four digits are stored in a separate column, so showing them never needs decryption. The trade-off is one extra call to the vault for each bank request."
+
+---
 
 ## 1. Clarify 和假设
 
